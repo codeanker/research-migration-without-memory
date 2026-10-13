@@ -1,0 +1,276 @@
+import { WebContainer } from '@webcontainer/api'
+import {
+  HEARTBEAT_JS,
+  buildProcessSnapshot,
+  lockfileForStage,
+  packageJsonForStage,
+  stageNeedsInstall,
+} from './payload'
+import { HEADER } from '../../shared/protocol.ts'
+import { lastHeartbeatTick, type HeartbeatTick } from '../../shared/heartbeat.ts'
+import { assertMeasurementStage, assertStrategy } from '../../shared/stages.ts'
+import { sleep } from '../../shared/timing.ts'
+import type { CsvRowJson, RunOutcome, RunRequest, RunnerError } from '../../shared/browser-api.ts'
+
+export type { RunOutcome }
+
+export type RunConfig = RunRequest & {
+  onLog?: (msg: string) => void
+}
+
+const DEFAULT_WARMUP_STATE_WRITES = 3
+const STATE_POLL_MS = 100
+const FIRST_STATE_WRITE_TIMEOUT_MS = 60_000
+
+export function isBrowserUsable(): boolean {
+  return window.crossOriginIsolated === true
+}
+
+export async function runOnce(config: RunConfig): Promise<RunOutcome> {
+  const {
+    stage,
+    strategy = '',
+    runIndex,
+    sessionLabel = '',
+    runnerUrl,
+    logIntervalMs,
+    stopOffsetMs = null,
+    warmupStateWrites = DEFAULT_WARMUP_STATE_WRITES,
+    positionInCycle = null,
+    cycle = null,
+    firstRun = false,
+    firstRunOfCell = false,
+  } = config
+  const log = config.onLog ?? (() => {})
+
+  if (!isBrowserUsable()) {
+    throw new Error('crossOriginIsolated is false - WebContainer cannot boot (needs Chromium + COOP/COEP)')
+  }
+  const payloadStage = assertMeasurementStage(stage)
+  const payloadStrategy = assertStrategy(strategy)
+
+  const clientClockSkewMs = await measureClockSkew(runnerUrl, log)
+
+  const lockfile = lockfileForStage(payloadStage)
+  const container = await WebContainer.boot()
+  try {
+    await container.mount({
+      work: {
+        directory: {
+          'package.json': { file: { contents: packageJsonForStage(payloadStage) } },
+          ...(lockfile === null ? {} : { 'package-lock.json': { file: { contents: lockfile } } }),
+          'heartbeat.js': { file: { contents: HEARTBEAT_JS } },
+        },
+      },
+    })
+
+    if (stageNeedsInstall(payloadStage)) {
+      log(`Stage "${stage}" needs dependencies, running npm ci...`)
+      const installProc = await container.spawn('npm', ['ci'], { cwd: '/work' })
+      const installExit = await installProc.exit
+      if (installExit !== 0) throw new Error(`npm ci failed with exit code ${installExit}`)
+    }
+
+    const command = `node heartbeat.js ${logIntervalMs}`
+    const proc = await container.spawn('node', ['heartbeat.js', String(logIntervalMs)], { cwd: '/work' })
+
+    const warmup = await waitForStateWrites(
+      container,
+      '/work/state.json',
+      warmupStateWrites,
+      logIntervalMs * (warmupStateWrites + 2) + 5000
+    )
+    console.info(
+      `[warmup] first state write after ${warmup.startupMs.toFixed(0)}ms, ` +
+        `${warmup.writes} writes seen`
+    )
+
+    if (stopOffsetMs !== null) {
+      const waited = await waitForStopOffset(warmup.lastUpdatedAt, logIntervalMs, stopOffsetMs)
+      log(`Stop offset ${stopOffsetMs.toFixed(0)}ms into the interval, waited ${waited.toFixed(0)}ms`)
+    }
+
+    const stopAt = Date.now()
+    const tStop = performance.now()
+    proc.kill()
+    await proc.exit
+
+    const persisted = await readState(container)
+    const lastTick = await readLastHeartbeatTick(container)
+    const trueCounter = lastTick?.counter ?? null
+    const stateLossTicks =
+      typeof trueCounter === 'number' ? trueCounter - persisted.counter : null
+    const stopOffsetActualMs = persisted.updatedAt
+      ? stopAt - Date.parse(persisted.updatedAt)
+      : null
+
+    await container.fs.writeFile(
+      '/work/process-snapshot.json',
+      buildProcessSnapshot({ counter: persisted.counter, command, logIntervalMs, stateLossTicks })
+    )
+
+    const kill_to_export_ms = performance.now() - tStop
+    const t0 = performance.now()
+    const zip = await container.export('work', {
+      format: 'zip',
+      excludes: payloadStrategy === 'manifest' ? ['node_modules/**'] : [],
+    })
+    const export_ms = performance.now() - t0
+    log(
+      `Export done: ${export_ms.toFixed(1)}ms, ${zip.byteLength} bytes, ` +
+        `kill to export: ${kill_to_export_ms.toFixed(1)}ms, ` +
+        `counter at export: ${persisted.counter} (true: ${trueCounter}, ` +
+        `state_loss_ticks: ${stateLossTicks}, stop offset actual: ` +
+        `${stopOffsetActualMs === null ? '-' : stopOffsetActualMs.toFixed(0) + 'ms'})`
+    )
+
+    const response = await fetch(runnerUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/zip',
+        [HEADER.exportMs]: String(export_ms),
+        [HEADER.stage]: stage,
+        [HEADER.strategy]: payloadStrategy,
+        [HEADER.runIndex]: String(runIndex),
+        [HEADER.sessionLabel]: sessionLabel,
+        [HEADER.userAgent]: navigator.userAgent,
+        [HEADER.stopAt]: new Date(stopAt).toISOString(),
+        [HEADER.lastSourceTickAt]: lastTick?.at ?? '',
+        [HEADER.killToExportMs]: String(kill_to_export_ms),
+        [HEADER.stopOffsetTargetMs]: stopOffsetMs === null ? '' : String(stopOffsetMs),
+        [HEADER.stopOffsetActualMs]: stopOffsetActualMs === null ? '' : String(stopOffsetActualMs),
+        [HEADER.firstRun]: String(firstRun),
+        [HEADER.firstRunOfCell]: String(firstRunOfCell),
+        [HEADER.positionInCycle]: positionInCycle === null ? '' : String(positionInCycle),
+        [HEADER.cycle]: cycle === null ? '' : String(cycle),
+        [HEADER.clientClockSkewMs]:
+          clientClockSkewMs === null ? '' : clientClockSkewMs.toFixed(2),
+        [HEADER.clientNow]: new Date().toISOString(),
+      },
+      body: zip as BodyInit,
+    })
+    const row = (await response.json()) as CsvRowJson
+    if (!response.ok) {
+      const reported = typeof row.error === 'string' && row.error ? row.error : response.statusText
+      const err: RunnerError = new Error(`Runner reported an error: ${reported}`)
+      err.row = row
+      throw err
+    }
+    return { row, stop_offset_target_ms: stopOffsetMs, stop_offset_actual_ms: stopOffsetActualMs }
+  } finally {
+    container.teardown()
+  }
+}
+
+const CLOCK_SKEW_SAMPLES = 3
+
+async function measureClockSkew(
+  runnerUrl: string,
+  log: (msg: string) => void
+): Promise<number | null> {
+  let best: { skewMs: number; rttMs: number } | null = null
+  const clockUrl = new URL('/clock', new URL(runnerUrl, location.href)).toString()
+  for (let i = 0; i < CLOCK_SKEW_SAMPLES; i++) {
+    try {
+      const t1 = Date.now()
+      const response = await fetch(clockUrl, { cache: 'no-store' })
+      const t2 = Date.now()
+      if (!response.ok) return null
+      const { now } = (await response.json()) as { now: number }
+      const rttMs = t2 - t1
+      const skewMs = t1 + rttMs / 2 - now
+      if (!best || rttMs < best.rttMs) best = { skewMs, rttMs }
+    } catch {
+      return null
+    }
+  }
+  if (!best) return null
+  log(`Clock skew against the runner: ${best.skewMs.toFixed(1)}ms (rtt ${best.rttMs}ms)`)
+  return best.skewMs
+}
+
+interface WarmupResult {
+  writes: number
+  lastUpdatedAt: string
+  startupMs: number
+}
+
+async function waitForStateWrites(
+  container: WebContainer,
+  path: string,
+  minWrites: number,
+  cadenceTimeoutMs: number,
+  firstWriteTimeoutMs = FIRST_STATE_WRITE_TIMEOUT_MS
+): Promise<WarmupResult> {
+  const seenTimestamps = new Set<string>()
+  let lastUpdatedAt = ''
+  const t0 = performance.now()
+  let startupMs = 0
+  let deadline = t0 + firstWriteTimeoutMs
+  while (performance.now() < deadline) {
+    const updatedAt = await readStateUpdatedAt(container, path)
+    if (updatedAt && !seenTimestamps.has(updatedAt)) {
+      if (seenTimestamps.size === 0) {
+        startupMs = performance.now() - t0
+        deadline = performance.now() + cadenceTimeoutMs
+      }
+      seenTimestamps.add(updatedAt)
+      lastUpdatedAt = updatedAt
+    }
+    if (seenTimestamps.size >= minWrites) {
+      return { writes: seenTimestamps.size, lastUpdatedAt, startupMs }
+    }
+    await sleep(STATE_POLL_MS)
+  }
+  if (seenTimestamps.size === 0) {
+    throw new Error(
+      `${path} was never written within ${firstWriteTimeoutMs}ms - the heartbeat process did ` +
+        'not start'
+    )
+  }
+  throw new Error(
+    `${path} reached only ${seenTimestamps.size} of ${minWrites} writes within ` +
+      `${cadenceTimeoutMs}ms after the first write (last write ${lastUpdatedAt}) - the ` +
+      'heartbeat process stopped writing'
+  )
+}
+
+async function waitForStopOffset(
+  lastUpdatedAt: string,
+  logIntervalMs: number,
+  stopOffsetMs: number
+): Promise<number> {
+  const lastWriteMs = Date.parse(lastUpdatedAt)
+  if (!Number.isFinite(lastWriteMs)) {
+    throw new Error(`state.json has no usable updatedAt ("${lastUpdatedAt}"), stop offset impossible`)
+  }
+  let deadline = lastWriteMs + logIntervalMs + stopOffsetMs
+  const t0 = Date.now()
+  while (deadline <= t0) deadline += logIntervalMs
+  await sleep(deadline - t0)
+  return Date.now() - t0
+}
+
+async function readStateUpdatedAt(container: WebContainer, path: string): Promise<string | null> {
+  try {
+    const raw = await container.fs.readFile(path, 'utf-8')
+    return (JSON.parse(raw) as { updatedAt?: string }).updatedAt ?? null
+  } catch {
+    return null
+  }
+}
+
+interface StateFile {
+  counter: number
+  updatedAt?: string
+}
+
+async function readState(container: WebContainer): Promise<StateFile> {
+  const raw = await container.fs.readFile('/work/state.json', 'utf-8')
+  return JSON.parse(raw) as StateFile
+}
+
+async function readLastHeartbeatTick(container: WebContainer): Promise<HeartbeatTick | null> {
+  const raw = await container.fs.readFile('/work/heartbeat.log', 'utf-8')
+  return lastHeartbeatTick(raw)
+}

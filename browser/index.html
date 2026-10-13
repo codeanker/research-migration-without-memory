@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Handover experiment: WebContainer → E2B</title>
+  </head>
+  <body>
+    <h1>Handover experiment: WebContainer → E2B</h1>
+    <p>
+      Debug view for single runs and for debugging. Collection sessions run through
+      <code>pnpm run experiment</code>, so that matrix, order and seed are logged.
+    </p>
+    <p>
+      Stage: <select id="stage"></select> Runs: <input id="runs" type="number" value="3" min="1" />
+      Logging interval (ms): <input id="logInterval" type="number" value="1000" min="1" />
+      Stop offset (ms): <input id="stopOffset" value="" size="8" placeholder="random" />
+      Runner URL: <input id="runnerUrl" value="/run" size="30" />
+    </p>
+    <p>
+      Stage "small": four files without dependencies. Stage "large": package.json with aws-sdk,
+      node_modules &gt;50MB. The selection comes from <code>shared/stages.ts</code>, so that no
+      stage can stand here that <code>payload.ts</code> does not build.
+    </p>
+    <p>
+      Stop offset: distance from the preceding state write at which the process is killed. Empty
+      means uniform over [0, logging interval), without a recorded seed.
+    </p>
+    <button id="start">Start</button>
+    <pre id="log" style="white-space: pre-wrap; background: #111; color: #0f0; padding: 1em"></pre>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

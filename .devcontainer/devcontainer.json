@@ -1,0 +1,33 @@
+{
+  "name": "microvm-research-trial",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:26",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-toolsai.jupyter",
+        "ms-toolsai.datawrangler",
+        "eamodio.gitlens",
+        "donjayamanne.githistory",
+        "ms-python.python",
+        "ms-python.pylint",
+        "repreng.csv",
+        "anthropic.claude-code",
+        "James-Yu.latex-workshop"
+      ]
+    }
+  },
+
+  "forwardPorts": [5173],
+  "postCreateCommand": "bash .devcontainer/postCreate.sh",
+
+  "mounts": [
+    "type=bind,source=${localEnv:HOME}/.ssh,target=/root/.ssh"
+  ],
+
+  "remoteUser": "root"
+}

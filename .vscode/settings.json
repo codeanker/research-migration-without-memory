@@ -1,0 +1,22 @@
+{
+  "editor.wordWrap": "on",
+  "latex-workshop.latex.autoBuild.run": "onSave",
+  "latex-workshop.view.pdf.viewer": "tab",
+  "latex-workshop.latex.search.rootFiles.exclude": ["**/figures/**"],
+  "latex-workshop.latex.tools": [
+    {
+      "name": "make",
+      "command": "make",
+      "args": ["-C", "%WORKSPACE_FOLDER%/paper"],
+      "env": {}
+    }
+  ],
+  "latex-workshop.latex.recipes": [
+    {
+      "name": "make (figures + document)",
+      "tools": ["make"]
+    }
+  ],
+  "latex-workshop.latex.outDir": "%WORKSPACE_FOLDER%/paper/build",
+  "latex-workshop.latex.jobname": "paper"
+}

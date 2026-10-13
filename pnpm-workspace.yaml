@@ -1,0 +1,5 @@
+packages:
+  - browser
+
+overrides:
+  undici8: npm:undici@^8.10.0

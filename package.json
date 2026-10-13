@@ -1,0 +1,26 @@
+{
+  "name": "microvm-handover-experiment",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Measurement harness: handover cost from WebContainer to a server-side sandbox (E2B)",
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "runner": "node runner/server.ts",
+    "test": "node --test 'test/*.test.ts'",
+    "smoke": "node runner/smoke-local.ts",
+    "browser": "pnpm --filter browser dev",
+    "experiment": "node runner/experiment.ts --config experiments/main-study.json",
+    "experiment:local": "node runner/experiment.ts --config experiments/main-study.json --target local --repeats 1 --no-smoke",
+    "typecheck": "tsc -p tsconfig.json && pnpm --filter browser typecheck"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "e2b": "^2.38.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "playwright": "^1.62.1",
+    "typescript": "5.9.3"
+  }
+}
