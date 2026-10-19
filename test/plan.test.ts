@@ -1,10 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT } from '../runner/child.ts'
 import {
   buildPlan,
   mulberry32,
   orderCoverage,
   resolveConfig,
+  resolveDataPaths,
   stopOffsetCoverage,
 } from '../runner/plan.ts'
 import type { ConfigOverrides, FileConfig, PlanEntry } from '../runner/plan.ts'
@@ -188,6 +192,22 @@ test('every entry carries the run_id the runner will write', () => {
   )
 })
 
+test('a manifest-push cell gets its own run_id', () => {
+  const plan = planOf({ repeats: 1, cells: [{ stage: 'large', strategy: 'manifest-push' }] })
+  assert.deepEqual(
+    plan.map((e) => e.runId),
+    ['large-manifest-push-01']
+  )
+})
+
+test('a precopy cell is accepted and gets its own run_id', () => {
+  const plan = planOf({ repeats: 1, cells: [{ stage: 'large', strategy: 'precopy' }] })
+  assert.deepEqual(
+    plan.map((e) => e.runId),
+    ['large-precopy-01']
+  )
+})
+
 test('validation rejects what would only surface mid-session', () => {
   const cases: [FileConfig, RegExp][] = [
     [{ cells: [] }, /cells is empty/],
@@ -254,4 +274,41 @@ test('an unseeded config gets a seed and says so', () => {
   const config = resolveConfig({ ...baseConfig, seed: undefined })
   assert.equal(typeof config.seed, 'number')
   assert.equal(config.seedGenerated, true)
+})
+
+const LIVE_STUDY = JSON.parse(
+  readFileSync(path.join(REPO_ROOT, 'experiments/live-study.json'), 'utf8')
+) as FileConfig
+
+test('dataDir survives resolveConfig', () => {
+  assert.equal(resolveConfig({ ...baseConfig, dataDir: 'data/live' }).dataDir, 'data/live')
+})
+
+test('the live study writes under data/live without data env vars', () => {
+  const paths = resolveDataPaths(resolveConfig(LIVE_STUDY), REPO_ROOT, {})
+  assert.equal(paths.csvPath, path.join(REPO_ROOT, 'data/live/results.csv'))
+  assert.equal(paths.envPath, path.join(REPO_ROOT, 'data/live/env.json'))
+  assert.equal(paths.sessionDir, path.join(REPO_ROOT, 'data/live/sessions'))
+})
+
+test('DATA_DIR, CSV_PATH and ENV_PATH override the config dataDir', () => {
+  const paths = resolveDataPaths(resolveConfig(LIVE_STUDY), REPO_ROOT, {
+    DATA_DIR: '/scratch/data',
+    CSV_PATH: '/scratch/out/results.csv',
+    ENV_PATH: '/scratch/out/env.json',
+  })
+  assert.equal(paths.dataDir, '/scratch/data')
+  assert.equal(paths.csvPath, '/scratch/out/results.csv')
+  assert.equal(paths.envPath, '/scratch/out/env.json')
+  assert.equal(paths.sessionDir, '/scratch/data/sessions')
+})
+
+test('an empty dataDir is rejected', () => {
+  assert.throws(() => resolveConfig({ ...baseConfig, dataDir: ' ' }), /dataDir must be a non-empty path/)
+})
+
+test('a config without dataDir keeps data/', () => {
+  const paths = resolveDataPaths(resolveConfig(baseConfig), REPO_ROOT, {})
+  assert.equal(paths.csvPath, path.join(REPO_ROOT, 'data/results.csv'))
+  assert.equal(paths.sessionDir, path.join(REPO_ROOT, 'data/sessions'))
 })

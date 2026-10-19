@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { createServer } from 'node:http'
+import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { writeFile, mkdir, readdir, rm } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
@@ -27,12 +28,13 @@ import type { TimingContext } from './timing.ts'
 import { epochMsOf, errorMessage, num, numberOrBlank } from './util.ts'
 import { loadAdapter } from '../targets/registry.ts'
 import { AliveTimeoutError, TargetAdapter } from '../targets/interface.ts'
-import type { TargetHandle, WaitAliveResult } from '../targets/interface.ts'
+import type { CreateOptions, TargetHandle, WaitAliveResult } from '../targets/interface.ts'
 import { sleep, timed, withTimeout } from '../shared/timing.ts'
 import { CORS_ALLOW_HEADERS, HEADER, headerValue } from '../shared/protocol.ts'
 import { assertStrategy, isKnownStage, isMeasurementStage, KNOWN_STAGES } from '../shared/stages.ts'
 import type { ProcessSnapshot, ProcessState } from '../shared/work-state.ts'
 import { stageNeedsInstall } from '../browser/src/payload.ts'
+import { isPushStrategy, pushInstalls, zipListingTotals } from '../shared/push.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -48,7 +50,12 @@ const ENV_PATH = process.env.ENV_PATH
   : path.join(DATA_DIR, 'env.json')
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8787
 const TARGET_NAME = process.env.TARGET || 'e2b'
+const PREPARE_TTL_MS = process.env.PREPARE_TTL_MS ? Number(process.env.PREPARE_TTL_MS) : 60000
+if (!Number.isFinite(PREPARE_TTL_MS) || PREPARE_TTL_MS <= 0 || PREPARE_TTL_MS > 2 ** 31 - 1) {
+  throw new Error(`PREPARE_TTL_MS must be a positive number of ms, got "${process.env.PREPARE_TTL_MS}"`)
+}
 
+const PREPARED_LIFETIME_MS = 600000
 const RESUME_CHECK_MARGIN_MS = 400
 const RESUME_CHECK_FALLBACK_INTERVAL_MS = 1000
 const SHUTDOWN_TIMEOUT_MS = 20000
@@ -69,6 +76,20 @@ let runCounter = 0
 let targetMetaRecorded = false
 let activeRun: Promise<void> | null = null
 const liveHandles = new Set<TargetHandle>()
+
+interface PreparedTarget {
+  handle: TargetHandle
+  run_id: string
+  stage: string
+  strategy: string
+  push_bytes: number
+  push_boot_ms: number
+  push_upload_ms: number
+  push_unpack_ms: number
+  push_install_ms: number | ''
+  expiry?: ReturnType<typeof setTimeout>
+}
+const preparedTargets = new Map<string, PreparedTarget>()
 let shuttingDown = false
 
 let stallSinceLastRunMs = 0
@@ -108,14 +129,16 @@ const server = createServer(async (req, res) => {
       .end(JSON.stringify({ now: Date.now() }))
     return
   }
-  if (req.method === 'POST' && req.url === '/run') {
+  const handler =
+    req.method !== 'POST' ? null : req.url === '/run' ? handleRun : req.url === '/prepare' ? handlePrepare : null
+  if (handler) {
     if (activeRun) {
       res
         .writeHead(409, { 'content-type': 'application/json' })
         .end(JSON.stringify({ error: 'a run is already in progress on this runner' }))
       return
     }
-    activeRun = handleRun(req, res)
+    activeRun = handler(req, res)
       .catch((err: unknown) => {
         console.error('[runner] writing the result failed:', err)
         if (!res.headersSent) {
@@ -137,10 +160,126 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`[runner] Adapter: ${adapterName}`)
-  console.log(`[runner] Listening on http://localhost:${PORT}, POST /run`)
+  console.log(`[runner] Listening on http://localhost:${PORT}, POST /prepare and /run`)
   console.log(`[runner] CSV: ${CSV_PATH}`)
   console.log(`[runner] env: ${ENV_PATH}`)
 })
+
+function assertRunnable(stage: string, strategy: string): void {
+  if (!isKnownStage(stage)) {
+    throw new Error(
+      `unknown stage "${stage}" (known: ${KNOWN_STAGES.join(', ')}) - a typo here would label ` +
+        'a whole cell wrongly, so the run is refused instead of measured'
+    )
+  }
+  if (isMeasurementStage(stage) || strategy) assertStrategy(strategy)
+}
+
+async function createTarget(
+  opts?: CreateOptions
+): Promise<Awaited<ReturnType<TargetAdapter['create']>>> {
+  const created = await adapter.create(opts)
+  liveHandles.add(created.handle)
+  if (!targetMetaRecorded && created.meta) {
+    targetMetaRecorded = true
+    recordTargetMeta(ENV_PATH, created.meta).catch((err: unknown) =>
+      console.error('[runner] could not update env.json with target meta:', err)
+    )
+  }
+  return created
+}
+
+function needsInstall(stage: string): boolean {
+  return isMeasurementStage(stage) && stageNeedsInstall(stage)
+}
+
+async function handlePrepare(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const stage = headerValue(req.headers, HEADER.stage) || 'unknown'
+  const strategy = headerValue(req.headers, HEADER.strategy) || ''
+  const runIndex = headerValue(req.headers, HEADER.runIndex) || ''
+  const run_id = [stage, strategy, runIndex].filter(Boolean).join('-')
+  let handle: TargetHandle | null = null
+  try {
+    assertRunnable(stage, strategy)
+    if (!isPushStrategy(strategy)) {
+      throw new Error(`strategy "${strategy}" has no push phase, /prepare is only for push strategies`)
+    }
+    const body = await readBody(req)
+    const created = await createTarget({ lifetimeMs: PREPARED_LIFETIME_MS })
+    const targetHandle = created.handle
+    handle = targetHandle
+    const written = await adapter.writePayload(targetHandle, body)
+    const unpacked = await adapter.unpack(targetHandle)
+    const installed =
+      pushInstalls(strategy) && needsInstall(stage) ? await adapter.install(targetHandle) : null
+    const prepared: PreparedTarget = {
+      handle: targetHandle,
+      run_id,
+      stage,
+      strategy,
+      push_bytes: body.length,
+      push_boot_ms: created.boot_ms,
+      push_upload_ms: written.upload_ms,
+      push_unpack_ms: unpacked.unpack_ms,
+      push_install_ms: installed ? installed.install_ms : '',
+    }
+    const token = randomUUID()
+    preparedTargets.set(token, prepared)
+    prepared.expiry = setTimeout(() => void expirePrepared(token), PREPARE_TTL_MS)
+    const { handle: _handle, run_id: _runId, expiry: _expiry, ...values } = prepared
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ token, ...values }))
+  } catch (err: unknown) {
+    console.error(`[runner] Prepare ${run_id} failed:`, err)
+    if (handle) {
+      liveHandles.delete(handle)
+      try {
+        await adapter.destroy(handle)
+      } catch (destroyErr: unknown) {
+        console.error(`[runner] destroy() failed for prepare ${run_id}:`, destroyErr)
+      }
+    }
+    res
+      .writeHead(500, { 'content-type': 'application/json' })
+      .end(JSON.stringify({ error: `prepare failed: ${errorMessage(err)}` }))
+  }
+}
+
+async function expirePrepared(token: string): Promise<void> {
+  const prepared = preparedTargets.get(token)
+  preparedTargets.delete(token)
+  if (!prepared || !liveHandles.has(prepared.handle)) return
+  const expiredAt = new Date().toISOString()
+  try {
+    const { ms } = await timed(() => adapter.destroy(prepared.handle))
+    console.warn(
+      `[runner] prepared target of ${prepared.run_id} expired unused after ${PREPARE_TTL_MS}ms ` +
+        `at ${expiredAt}, destroyed in ${ms.toFixed(0)}ms`
+    )
+  } catch (err: unknown) {
+    console.error(`[runner] destroy() failed for expired prepare ${prepared.run_id} at ${expiredAt}:`, err)
+  } finally {
+    liveHandles.delete(prepared.handle)
+  }
+}
+
+function takePrepared(token: string | undefined, stage: string, strategy: string): PreparedTarget | null {
+  if (!isPushStrategy(strategy)) {
+    if (token) throw new Error(`strategy "${strategy}" has no push phase but came with ${HEADER.prepareToken}`)
+    return null
+  }
+  const prepared = token ? preparedTargets.get(token) : undefined
+  if (!token || !prepared) {
+    throw new Error(`strategy "${strategy}" needs a valid ${HEADER.prepareToken} from /prepare`)
+  }
+  if (prepared.stage !== stage || prepared.strategy !== strategy) {
+    throw new Error(
+      `${HEADER.prepareToken} was issued for ${prepared.stage}/${prepared.strategy}, not ${stage}/${strategy}`
+    )
+  }
+  preparedTargets.delete(token)
+  clearTimeout(prepared.expiry)
+  return prepared
+}
 
 async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const t_wall_start = performance.now()
@@ -212,13 +351,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
   }
 
   try {
-    if (!isKnownStage(stage)) {
-      throw new Error(
-        `unknown stage "${stage}" (known: ${KNOWN_STAGES.join(', ')}) - a typo here would label ` +
-          'a whole cell wrongly, so the run is refused instead of measured'
-      )
-    }
-    if (isMeasurementStage(stage) || strategy) assertStrategy(strategy)
+    assertRunnable(stage, strategy)
     if (!exportMsHeader) throw new Error(`Header ${HEADER.exportMs} missing`)
     const export_ms = Number(exportMsHeader)
     if (!Number.isFinite(export_ms)) throw new Error(`${HEADER.exportMs} invalid: ${exportMsHeader}`)
@@ -238,16 +371,28 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
     row.state_loss_ticks =
       typeof snapshot?.stateLossTicks === 'number' ? snapshot.stateLossTicks : ''
 
-    const created = await callAdapter('boot_ms', () => adapter.create())
-    const targetHandle = created.handle
-    handle = targetHandle
-    liveHandles.add(targetHandle)
-    row.boot_ms = created.boot_ms
-    if (!targetMetaRecorded && created.meta) {
-      targetMetaRecorded = true
-      recordTargetMeta(ENV_PATH, created.meta).catch((err: unknown) =>
-        console.error('[runner] could not update env.json with target meta:', err)
-      )
+    const prepared = takePrepared(headerValue(req.headers, HEADER.prepareToken), stage, strategy)
+    let targetHandle: TargetHandle
+    if (prepared) {
+      targetHandle = prepared.handle
+      handle = targetHandle
+      Object.assign(row, {
+        push_bytes: prepared.push_bytes,
+        push_boot_ms: prepared.push_boot_ms,
+        push_upload_ms: prepared.push_upload_ms,
+        push_unpack_ms: prepared.push_unpack_ms,
+        push_install_ms: prepared.push_install_ms,
+        push_export_ms: numberOrBlank(headerValue(req.headers, HEADER.pushExportMs)),
+        prepare_ms: numberOrBlank(headerValue(req.headers, HEADER.prepareMs)),
+        prepare_to_stop_ms: numberOrBlank(headerValue(req.headers, HEADER.prepareToStopMs)),
+        push_source_ticks: numberOrBlank(headerValue(req.headers, HEADER.pushSourceTicks)),
+        push_expected_ticks: numberOrBlank(headerValue(req.headers, HEADER.pushExpectedTicks)),
+      } satisfies Partial<Row>)
+    } else {
+      const created = await callAdapter('boot_ms', () => createTarget())
+      targetHandle = created.handle
+      handle = targetHandle
+      row.boot_ms = created.boot_ms
     }
 
     const written = await callAdapter('upload_ms', () => adapter.writePayload(targetHandle, body))
@@ -257,7 +402,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
     row.unpack_ms = unpacked.unpack_ms
     baselineLines = unpacked.heartbeat_baseline_lines
 
-    if (strategy === 'manifest' && isMeasurementStage(stage) && stageNeedsInstall(stage)) {
+    if (strategy === 'manifest' && needsInstall(stage)) {
       const installed = await callAdapter('install_ms', () => adapter.install(targetHandle))
       row.install_ms = installed.install_ms
     }
@@ -294,6 +439,17 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
     row.total_wall_ms = performance.now() - t_wall_start
     row.ingest_ms = ingestMs
     row.adapter_overhead_ms = adapterOverheadMs
+
+    if (prepared) {
+      try {
+        const { stdout } = await execFileAsync('unzip', ['-l', uploadPath])
+        const delta = zipListingTotals(stdout)
+        row.delta_files = delta.files
+        row.delta_bytes = delta.bytes
+      } catch (err: unknown) {
+        row.error = appendError(row.error, `delta listing: ${errorMessage(err)}`)
+      }
+    }
 
     try {
       const sourceState = await extractJsonFromZip<ProcessState>(uploadPath, 'work/state.json')

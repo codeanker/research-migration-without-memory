@@ -10,6 +10,13 @@ import { HEADER } from '../../shared/protocol.ts'
 import { lastHeartbeatTick, type HeartbeatTick } from '../../shared/heartbeat.ts'
 import { assertMeasurementStage, assertStrategy } from '../../shared/stages.ts'
 import { sleep } from '../../shared/timing.ts'
+import {
+  deltaIncludes,
+  dirtyNodeModules,
+  expectedTicks,
+  isPushStrategy,
+  pushInstalls,
+} from '../../shared/push.ts'
 import type { CsvRowJson, RunOutcome, RunRequest, RunnerError } from '../../shared/browser-api.ts'
 
 export type { RunOutcome }
@@ -21,6 +28,7 @@ export type RunConfig = RunRequest & {
 const DEFAULT_WARMUP_STATE_WRITES = 3
 const STATE_POLL_MS = 100
 const FIRST_STATE_WRITE_TIMEOUT_MS = 60_000
+const FRESH_STATE_TIMEOUT_MS = 1000
 
 export function isBrowserUsable(): boolean {
   return window.crossOriginIsolated === true
@@ -85,8 +93,13 @@ export async function runOnce(config: RunConfig): Promise<RunOutcome> {
         `${warmup.writes} writes seen`
     )
 
+    const push = isPushStrategy(payloadStrategy)
+      ? await runPushPhase(container, { stage, strategy: payloadStrategy, runIndex, sessionLabel, runnerUrl })
+      : null
+
     if (stopOffsetMs !== null) {
-      const waited = await waitForStopOffset(warmup.lastUpdatedAt, logIntervalMs, stopOffsetMs)
+      const stopBase = push ? push.freshUpdatedAt : warmup.lastUpdatedAt
+      const waited = await waitForStopOffset(stopBase, logIntervalMs, stopOffsetMs)
       log(`Stop offset ${stopOffsetMs.toFixed(0)}ms into the interval, waited ${waited.toFixed(0)}ms`)
     }
 
@@ -111,10 +124,26 @@ export async function runOnce(config: RunConfig): Promise<RunOutcome> {
 
     const kill_to_export_ms = performance.now() - tStop
     const t0 = performance.now()
-    const zip = await container.export('work', {
-      format: 'zip',
-      excludes: payloadStrategy === 'manifest' ? ['node_modules/**'] : [],
-    })
+    let zip: Uint8Array
+    if (push) {
+      const dirty = [...push.dirty]
+      const dirtyModules = dirtyNodeModules(dirty)
+      console.info(`[push] guard: ${dirtyModules.length} node_modules paths in the dirty set`)
+      if (dirtyModules.length > 0) {
+        throw new Error(
+          `node_modules changed during the push phase, the prepared target would mix states: ` +
+            dirtyModules.sort().join(', ')
+        )
+      }
+      const includes = deltaIncludes(dirty)
+      console.info(`[push] dirty set at the stop: ${dirty.sort().join(', ') || '-'}`)
+      zip = await container.export('work', { format: 'zip', includes })
+    } else {
+      zip = await container.export('work', {
+        format: 'zip',
+        excludes: payloadStrategy === 'manifest' ? ['node_modules/**'] : [],
+      })
+    }
     const export_ms = performance.now() - t0
     log(
       `Export done: ${export_ms.toFixed(1)}ms, ${zip.byteLength} bytes, ` +
@@ -145,6 +174,16 @@ export async function runOnce(config: RunConfig): Promise<RunOutcome> {
         [HEADER.cycle]: cycle === null ? '' : String(cycle),
         [HEADER.clientClockSkewMs]:
           clientClockSkewMs === null ? '' : clientClockSkewMs.toFixed(2),
+        ...(push
+          ? {
+              [HEADER.prepareToken]: push.token,
+              [HEADER.pushExportMs]: String(push.pushExportMs),
+              [HEADER.prepareMs]: String(push.prepareMs),
+              [HEADER.prepareToStopMs]: String(stopAt - push.preparedAt),
+              [HEADER.pushSourceTicks]: push.sourceTicks === null ? '' : String(push.sourceTicks),
+              [HEADER.pushExpectedTicks]: push.sourceTicks === null ? '' : String(push.expectedTicks),
+            }
+          : {}),
         [HEADER.clientNow]: new Date().toISOString(),
       },
       body: zip as BodyInit,
@@ -159,6 +198,92 @@ export async function runOnce(config: RunConfig): Promise<RunOutcome> {
     return { row, stop_offset_target_ms: stopOffsetMs, stop_offset_actual_ms: stopOffsetActualMs }
   } finally {
     container.teardown()
+  }
+}
+
+interface PushPhaseRequest {
+  stage: string
+  strategy: string
+  runIndex: number | string
+  sessionLabel: string
+  runnerUrl: string
+}
+
+interface PushPhase {
+  token: string
+  dirty: Set<string>
+  pushExportMs: number
+  prepareMs: number
+  preparedAt: number
+  freshUpdatedAt: string
+  sourceTicks: number | null
+  expectedTicks: number
+}
+
+async function runPushPhase(container: WebContainer, request: PushPhaseRequest): Promise<PushPhase> {
+  const prepareStart = performance.now()
+  const tickBefore = await readLastHeartbeatTick(container)
+  const dirty = new Set<string>()
+  container.fs.watch('/work', { recursive: true }, (_event, filename) => {
+    dirty.add(typeof filename === 'string' ? filename : new TextDecoder().decode(filename))
+  })
+  console.info('[push] watch started on /work')
+  const t0 = performance.now()
+  const zip = await container.export('work', {
+    format: 'zip',
+    excludes: pushInstalls(request.strategy) ? ['node_modules/**'] : [],
+  })
+  const pushExportMs = performance.now() - t0
+  console.info(`[push] push export done: ${pushExportMs.toFixed(1)}ms, ${zip.byteLength} bytes`)
+
+  const prepareUrl = new URL('/prepare', new URL(request.runnerUrl, location.href)).toString()
+  const response = await fetch(prepareUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/zip',
+      [HEADER.stage]: request.stage,
+      [HEADER.strategy]: request.strategy,
+      [HEADER.runIndex]: String(request.runIndex),
+      [HEADER.sessionLabel]: request.sessionLabel,
+    },
+    body: zip as BodyInit,
+  })
+  const body = (await response.json()) as { token?: string; error?: string }
+  const prepareMs = performance.now() - prepareStart
+  const preparedAt = Date.now()
+  if (!response.ok || !body.token) {
+    throw new Error(`Runner reported an error on /prepare: ${body.error ?? response.statusText}`)
+  }
+  const tickAfter = await readLastHeartbeatTick(container)
+  const expected = expectedTicks(performance.now() - prepareStart)
+  const sourceTicks = tickBefore && tickAfter ? tickAfter.counter - tickBefore.counter : null
+  console.info(
+    `[push] prepared in ${prepareMs.toFixed(0)}ms, source ticks ${sourceTicks ?? '-'} of ` +
+      `${expected} expected`
+  )
+
+  const freshUpdatedAt = await readFreshStateUpdatedAt(container)
+  return {
+    token: body.token,
+    dirty,
+    pushExportMs,
+    prepareMs,
+    preparedAt,
+    freshUpdatedAt,
+    sourceTicks,
+    expectedTicks: expected,
+  }
+}
+
+async function readFreshStateUpdatedAt(container: WebContainer): Promise<string> {
+  const deadline = performance.now() + FRESH_STATE_TIMEOUT_MS
+  for (;;) {
+    const updatedAt = await readStateUpdatedAt(container, '/work/state.json')
+    if (updatedAt) return updatedAt
+    if (performance.now() >= deadline) {
+      throw new Error(`state.json gave no updatedAt within ${FRESH_STATE_TIMEOUT_MS}ms after /prepare`)
+    }
+    await sleep(STATE_POLL_MS)
   }
 }
 

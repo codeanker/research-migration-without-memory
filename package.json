@@ -12,6 +12,7 @@
     "browser": "pnpm --filter browser dev",
     "experiment": "node runner/experiment.ts --config experiments/main-study.json",
     "experiment:local": "node runner/experiment.ts --config experiments/main-study.json --target local --repeats 1 --no-smoke",
+    "experiment:live": "node runner/experiment.ts --config experiments/live-study.json",
     "typecheck": "tsc -p tsconfig.json && pnpm --filter browser typecheck"
   },
   "dependencies": {

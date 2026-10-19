@@ -14,12 +14,14 @@ export interface FakeExportOptions {
   lastSourceTickAt: number
   logIntervalMs: number
   priorCounter?: number
+  files?: string[]
 }
 
 export async function buildFakeExport({
   lastSourceTickAt,
   logIntervalMs,
   priorCounter = 1,
+  files,
 }: FakeExportOptions): Promise<Buffer> {
   const stagingRoot = await mkdtemp(path.join(tmpdir(), 'fake-export-'))
   try {
@@ -53,7 +55,8 @@ export async function buildFakeExport({
     )
 
     const zipPath = path.join(stagingRoot, 'payload.zip')
-    await execFileAsync('zip', ['-rq', zipPath, 'work'], { cwd: stagingRoot })
+    const entries = files ? files.map((file) => path.join('work', file)) : ['work']
+    await execFileAsync('zip', ['-rqMM', zipPath, ...entries], { cwd: stagingRoot })
     return readFile(zipPath)
   } finally {
     await rm(stagingRoot, { recursive: true, force: true })

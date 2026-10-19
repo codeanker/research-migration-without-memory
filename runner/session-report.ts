@@ -4,6 +4,7 @@ import { REPO_ROOT } from './child.ts'
 import { orderCoverage, stopOffsetCoverage } from './plan.ts'
 import type {
   CoverageEntry,
+  DataPaths,
   ExperimentConfig,
   OrderCoverageEntry,
   PlanEntry,
@@ -12,8 +13,6 @@ import { fmt, median, pluck, readJson } from './util.ts'
 import type { CsvColumn, Row } from './csv.ts'
 import type { EnvInfo } from './env-info.ts'
 import type { CsvRowJson } from '../shared/browser-api.ts'
-
-export const SESSION_DIR = path.join(REPO_ROOT, 'data', 'sessions')
 
 const ENV_COMPARE_FIELDS = [
   'node_version',
@@ -222,8 +221,12 @@ export function summarize(session: SessionManifest, plan: PlanEntry[]): SessionS
   }
 }
 
-export function printPlan(config: ExperimentConfig, plan: PlanEntry[]): void {
+export function printPlan(config: ExperimentConfig, plan: PlanEntry[], paths: DataPaths): void {
   const cells = [...new Set(plan.map((e) => e.cellKey))]
+  console.log(
+    `[experiment] csv=${displayPath(paths.csvPath)} env=${displayPath(paths.envPath)} ` +
+      `sessions=${displayPath(paths.sessionDir)}/`
+  )
   console.log(
     `[experiment] target=${config.target} repeats=${config.repeats} order=shuffled ` +
       `seed=${config.seed}${config.seedGenerated ? ' (generated)' : ''} ` +
@@ -275,9 +278,13 @@ function printStopOffsetCoverage(plan: PlanEntry[]): void {
   }
 }
 
-export function printEnvInfo(envInfo: EnvInfo | null, drift: EnvDrift | null): void {
+export function printEnvInfo(
+  envInfo: EnvInfo | null,
+  drift: EnvDrift | null,
+  paths: DataPaths
+): void {
   if (!envInfo) return
-  console.log('\n[experiment] data/env.json after the first run:')
+  console.log(`\n[experiment] ${displayPath(paths.envPath)} after the first run:`)
   for (const field of ENV_COMPARE_FIELDS) {
     console.log(`  ${field} = ${JSON.stringify(pluck(envInfo, field))}`)
   }
@@ -306,11 +313,15 @@ export function printEnvInfo(envInfo: EnvInfo | null, drift: EnvDrift | null): v
   }
 }
 
-export function printSummary(session: SessionManifest, sessionPath: string): void {
+export function printSummary(
+  session: SessionManifest,
+  sessionPath: string,
+  paths: DataPaths
+): void {
   const s = session.summary
   if (!s) return
   console.log('\n=== Session summary ===')
-  console.log(`Manifest: ${path.relative(REPO_ROOT, sessionPath)}`)
+  console.log(`Manifest: ${displayPath(sessionPath)}`)
   console.log(
     `${s.done}/${s.planned} runs, ${s.failed} failed, ${s.with_error_field} with a set error field, ` +
       `error rate ${s.error_rate === null ? '-' : s.error_rate}, ` +
@@ -339,11 +350,21 @@ export function printSummary(session: SessionManifest, sessionPath: string): voi
     )
   }
   console.log('\nSecure the data now:')
-  console.log(`  cp data/results.csv "data/results-$(date +%Y%m%d-%H%M).csv"`)
+  const csv = displayPath(paths.csvPath)
+  const { dir, name } = path.parse(paths.csvPath)
+  const backup = displayPath(path.join(dir, `${name}-`))
+  console.log(`  cp "${csv}" "${backup}$(date +%Y%m%d-%H%M).csv"`)
   console.log(
-    `  git add data/results.csv data/env.json ${path.relative(REPO_ROOT, sessionPath)} && ` +
+    `  git add "${csv}" "${displayPath(paths.envPath)}" "${displayPath(sessionPath)}" && ` +
       `git commit -m "Data as of $(date +%Y-%m-%d): ${s.done} runs"`
   )
+}
+
+function displayPath(target: string): string {
+  const relative = path.relative(REPO_ROOT, target)
+  return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+    ? target
+    : relative
 }
 
 export async function compareWithPreviousSession(
@@ -351,16 +372,17 @@ export async function compareWithPreviousSession(
   currentPath: string
 ): Promise<EnvDrift | null> {
   if (!envInfo) return null
+  const sessionDir = path.dirname(currentPath)
   let files: string[]
   try {
-    files = (await readdir(SESSION_DIR)).filter((f) => f.endsWith('.json')).sort()
+    files = (await readdir(sessionDir)).filter((f) => f.endsWith('.json')).sort()
   } catch {
     return null
   }
   const candidates: { name: string; parsed: SessionManifest }[] = []
   for (const name of files) {
-    if (path.join(SESSION_DIR, name) === currentPath) continue
-    const parsed = await readJson<SessionManifest>(path.join(SESSION_DIR, name))
+    if (path.join(sessionDir, name) === currentPath) continue
+    const parsed = await readJson<SessionManifest>(path.join(sessionDir, name))
     if (parsed?.env_info && parsed.started_at) candidates.push({ name, parsed })
   }
   candidates.sort((a, b) => Date.parse(a.parsed.started_at) - Date.parse(b.parsed.started_at))

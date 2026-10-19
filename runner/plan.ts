@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { ADAPTER_NAMES, isKnownAdapter } from '../targets/registry.ts'
 import type { AdapterName } from '../targets/registry.ts'
 import { MEASUREMENT_STAGES, STRATEGIES, isMeasurementStage, isStrategy } from '../shared/stages.ts'
@@ -33,6 +34,7 @@ export interface FileConfig {
   reloadBetweenRuns?: boolean
   smokeFirst?: boolean | null
   seed?: number | null
+  dataDir?: string
   notes?: string[]
 }
 
@@ -66,6 +68,7 @@ export interface DraftConfig {
   smokeFirst: boolean | null
   seed?: number | null
   seedGenerated?: boolean
+  dataDir?: string
   notes?: string[]
   stages?: string[]
   strategies?: string[]
@@ -180,6 +183,12 @@ function validate(config: DraftConfig): asserts config is ExperimentConfig {
       )
     }
   }
+  if (
+    config.dataDir !== undefined &&
+    (typeof config.dataDir !== 'string' || config.dataDir.trim() === '')
+  ) {
+    throw new Error(`config: dataDir must be a non-empty path, got ${JSON.stringify(config.dataDir)}`)
+  }
   if (!isKnownAdapter(config.target)) {
     throw new Error(
       `config: target must be one of ${ADAPTER_NAMES.join(', ')}, got "${config.target}"`
@@ -187,6 +196,29 @@ function validate(config: DraftConfig): asserts config is ExperimentConfig {
   }
   if (config.seed === undefined || config.seed === null) {
     throw new Error('config: seed is missing - resolveConfig draws one when the config has none')
+  }
+}
+
+export interface DataPaths {
+  dataDir: string
+  csvPath: string
+  envPath: string
+  sessionDir: string
+}
+
+export function resolveDataPaths(
+  config: Pick<DraftConfig, 'dataDir'>,
+  root: string,
+  env: NodeJS.ProcessEnv = process.env
+): DataPaths {
+  const dataDir = env.DATA_DIR
+    ? path.resolve(env.DATA_DIR)
+    : path.resolve(root, config.dataDir ?? 'data')
+  return {
+    dataDir,
+    csvPath: env.CSV_PATH ? path.resolve(env.CSV_PATH) : path.join(dataDir, 'results.csv'),
+    envPath: env.ENV_PATH ? path.resolve(env.ENV_PATH) : path.join(dataDir, 'env.json'),
+    sessionDir: path.join(dataDir, 'sessions'),
   }
 }
 

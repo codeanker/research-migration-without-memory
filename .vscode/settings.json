@@ -18,5 +18,11 @@
     }
   ],
   "latex-workshop.latex.outDir": "%WORKSPACE_FOLDER%/paper/build",
-  "latex-workshop.latex.jobname": "paper"
+  "latex-workshop.latex.jobname": "paper",
+  "better-comments.tags": [
+    { "tag": "!", "color": "#FF2D00", "backgroundColor": "transparent", "bold": true },
+    { "tag": "?", "color": "#3498DB", "backgroundColor": "transparent" },
+    { "tag": "todo", "color": "#FF8C00", "backgroundColor": "transparent", "bold": true },
+    { "tag": "*", "color": "#98C379", "backgroundColor": "transparent" }
+  ]
 }

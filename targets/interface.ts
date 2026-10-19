@@ -19,6 +19,10 @@ export interface CreateResult<H extends TargetHandle = TargetHandle> {
   meta?: TargetMeta
 }
 
+export interface CreateOptions {
+  lifetimeMs?: number
+}
+
 export interface WritePayloadResult {
   upload_ms: number
 }
@@ -70,7 +74,7 @@ export interface ClockOffsetOptions {
 export abstract class TargetAdapter<H extends TargetHandle = TargetHandle> {
   static NAME = 'unimplemented'
 
-  abstract create(): Promise<CreateResult<H>>
+  abstract create(opts?: CreateOptions): Promise<CreateResult<H>>
 
   abstract writePayload(handle: H, bytes: Buffer): Promise<WritePayloadResult>
 

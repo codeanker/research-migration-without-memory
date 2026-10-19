@@ -67,6 +67,18 @@ export interface Row {
   client_clock_skew_ms: CsvNumber
   client_header_delay_ms: CsvNumber
   host_stall_ms: CsvNumber
+  push_export_ms: CsvNumber
+  push_bytes: CsvNumber
+  push_upload_ms: CsvNumber
+  push_boot_ms: CsvNumber
+  push_unpack_ms: CsvNumber
+  push_install_ms: CsvNumber
+  prepare_ms: CsvNumber
+  prepare_to_stop_ms: CsvNumber
+  delta_bytes: CsvNumber
+  delta_files: CsvNumber
+  push_source_ticks: CsvNumber
+  push_expected_ticks: CsvNumber
   sanity_warnings: string
   error: string
 }
@@ -127,6 +139,18 @@ export const CSV_COLUMNS = [
   'client_clock_skew_ms',
   'client_header_delay_ms',
   'host_stall_ms',
+  'push_export_ms',
+  'push_bytes',
+  'push_upload_ms',
+  'push_boot_ms',
+  'push_unpack_ms',
+  'push_install_ms',
+  'prepare_ms',
+  'prepare_to_stop_ms',
+  'delta_bytes',
+  'delta_files',
+  'push_source_ticks',
+  'push_expected_ticks',
   'sanity_warnings',
   'error',
 ] as const

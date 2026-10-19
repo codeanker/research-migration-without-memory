@@ -17,6 +17,12 @@ export const HEADER = {
   cycle: 'X-Cycle',
   firstRun: 'X-First-Run',
   firstRunOfCell: 'X-First-Run-Of-Cell',
+  prepareToken: 'X-Prepare-Token',
+  pushExportMs: 'X-Push-Export-Ms',
+  prepareMs: 'X-Prepare-Ms',
+  prepareToStopMs: 'X-Prepare-To-Stop-Ms',
+  pushSourceTicks: 'X-Push-Source-Ticks',
+  pushExpectedTicks: 'X-Push-Expected-Ticks',
 } as const
 
 export type HeaderName = (typeof HEADER)[keyof typeof HEADER]

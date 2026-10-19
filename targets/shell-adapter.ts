@@ -3,6 +3,7 @@ import { TargetAdapter, AliveTimeoutError } from './interface.ts'
 import type {
   ClockOffsetOptions,
   ClockOffsetResult,
+  CreateOptions,
   CreateResult,
   InstallResult,
   ProgressResult,
@@ -46,14 +47,14 @@ export abstract class ShellTargetAdapter<H extends ShellHandle = ShellHandle> ex
   execTimeoutMs = DEFAULT_EXEC_TIMEOUT_MS
   tooling: Tooling | null = null
 
-  abstract createTarget(): Promise<CreateResult<H>>
+  abstract createTarget(opts?: CreateOptions): Promise<CreateResult<H>>
 
   abstract exec(handle: H, script: string, opts?: ExecOptions): Promise<ExecResult>
 
   abstract writeFileToTarget(handle: H, targetPath: string, bytes: Buffer): Promise<void>
 
-  override async create(): Promise<CreateResult<H>> {
-    const created = await this.createTarget()
+  override async create(opts?: CreateOptions): Promise<CreateResult<H>> {
+    const created = await this.createTarget(opts)
     this.tooling ??= await this.checkTooling(created.handle)
     return { ...created, meta: { ...(created.meta ?? {}), tooling: this.tooling } }
   }

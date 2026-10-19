@@ -1,7 +1,7 @@
 import { Sandbox } from 'e2b'
 import { ShellTargetAdapter } from './shell-adapter.ts'
 import type { ExecOptions, ExecResult, ShellHandle } from './shell-adapter.ts'
-import type { CreateResult } from './interface.ts'
+import type { CreateOptions, CreateResult } from './interface.ts'
 import { timed } from '../shared/timing.ts'
 
 const DEFAULT_HOME = '/home/user'
@@ -19,12 +19,14 @@ export class E2BAdapter extends ShellTargetAdapter<E2BHandle> {
   static override NAME = 'e2b'
   probe: SandboxProbe | null = null
 
-  override async createTarget(): Promise<CreateResult<E2BHandle>> {
+  override async createTarget(opts?: CreateOptions): Promise<CreateResult<E2BHandle>> {
     const apiKey = process.env.E2B_API_KEY
     if (!apiKey) {
       throw new Error('E2B_API_KEY is not set (only from environment variable, see README)')
     }
-    const { value: sandbox, ms: boot_ms } = await timed(() => Sandbox.create({ apiKey }))
+    const { value: sandbox, ms: boot_ms } = await timed(() =>
+      Sandbox.create(opts?.lifetimeMs ? { apiKey, timeoutMs: opts.lifetimeMs } : { apiKey })
+    )
     this.probe ??= await probeSandbox(sandbox)
     const { home, targetNodeVersion } = this.probe
     return { handle: { sandbox, home }, boot_ms, meta: { targetNodeVersion } }

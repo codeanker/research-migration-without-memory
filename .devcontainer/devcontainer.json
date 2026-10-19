@@ -17,7 +17,8 @@
         "ms-python.pylint",
         "repreng.csv",
         "anthropic.claude-code",
-        "James-Yu.latex-workshop"
+        "James-Yu.latex-workshop",
+        "aaron-bond.better-comments"
       ]
     }
   },

@@ -25,7 +25,7 @@ export function assertMeasurementStage(stage: string): MeasurementStage {
   return stage
 }
 
-export const STRATEGIES = ['full', 'manifest'] as const
+export const STRATEGIES = ['full', 'manifest', 'precopy', 'manifest-push'] as const
 
 export type Strategy = (typeof STRATEGIES)[number]
 

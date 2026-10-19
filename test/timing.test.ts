@@ -10,6 +10,8 @@ import {
   tickCorrectedDurations,
 } from '../runner/timing.ts'
 import type { TimingRow } from '../runner/timing.ts'
+import { makeEmptyRow } from '../runner/csv.ts'
+import type { Row } from '../runner/csv.ts'
 
 const STOP_AT = Date.parse('2026-09-04T10:00:00.000Z')
 const FIRST_TICK_AT = '2026-09-04T10:00:00.400Z'
@@ -229,6 +231,19 @@ test('a manifest run adds up only with install_ms in the phase sum', () => {
   assert.deepEqual(checkTimingSanity(row, context), [])
   const withoutInstall: TimingRow = { ...row, total_sum_ms: 640 }
   assert.match(checkTimingSanity(withoutInstall, context)[0], /deviates from total_wall_ms/)
+})
+
+test('a push run adds up with boot_ms and install_ms left blank and the push phase outside', () => {
+  const row: Row = {
+    ...makeEmptyRow(),
+    ...cleanRow(),
+    boot_ms: '',
+    install_ms: '',
+    push_boot_ms: 900,
+    push_install_ms: 2500,
+    prepare_ms: 3600,
+  }
+  assert.deepEqual(checkTimingSanity(row, context), [])
 })
 
 test('a missing interruption value stops the checks with one clear message', () => {

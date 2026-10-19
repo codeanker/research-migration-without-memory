@@ -7,12 +7,17 @@ import path from 'node:path'
 import { chromium } from 'playwright'
 import type { Browser, Page } from 'playwright'
 import { REPO_ROOT, RUNNER_READY, mirror, spawnRunner, streamsOf, waitForStdout } from './child.ts'
-import { resolveConfig, buildPlan, orderCoverage, stopOffsetCoverage } from './plan.ts'
-import type { ConfigOverrides, ExperimentConfig, FileConfig, PlanEntry } from './plan.ts'
+import {
+  resolveConfig,
+  resolveDataPaths,
+  buildPlan,
+  orderCoverage,
+  stopOffsetCoverage,
+} from './plan.ts'
+import type { ConfigOverrides, DataPaths, ExperimentConfig, FileConfig, PlanEntry } from './plan.ts'
 import { errorMessage, readJson, writeJson } from './util.ts'
 import type { EnvInfo } from './env-info.ts'
 import {
-  SESSION_DIR,
   compareWithPreviousSession,
   formatRunResult,
   pickRowFields,
@@ -32,7 +37,6 @@ declare const window: {
 
 const execFileAsync = promisify(execFile)
 const BROWSER_DIR = path.join(REPO_ROOT, 'browser')
-const ENV_PATH = path.join(REPO_ROOT, 'data', 'env.json')
 
 const BROWSER_CHANNEL = 'chromium'
 const STARTUP_TIMEOUT_MS = 60000
@@ -67,9 +71,10 @@ async function main(): Promise<number> {
     : {}
   const config = resolveConfig(fileConfig, args.overrides)
   const plan = buildPlan(config)
+  const paths = resolveDataPaths(config, REPO_ROOT)
 
   console.log(`[experiment] Config: ${args.config || '(defaults only)'}`)
-  printPlan(config, plan)
+  printPlan(config, plan, paths)
   if (args.dryRun) {
     console.log('\n[experiment] --dry-run: nothing started, nothing measured.')
     return 0
@@ -115,15 +120,15 @@ async function main(): Promise<number> {
     summary: null,
   }
   const sessionPath = path.join(
-    SESSION_DIR,
+    paths.sessionDir,
     `${config.label}-${session.started_at.replace(/[:.]/g, '-')}.json`
   )
-  await mkdir(SESSION_DIR, { recursive: true })
+  await mkdir(paths.sessionDir, { recursive: true })
 
   const runnerPort = args.runnerPort ?? 8787
   const vitePort = args.vitePort ?? 5173
 
-  await startRunner({ target: config.target, port: runnerPort })
+  await startRunner({ target: config.target, port: runnerPort, paths })
   const viteUrl = await startVite({ vitePort, runnerPort })
   browser = await chromium.launch({
     headless: !args.headed,
@@ -211,9 +216,9 @@ async function main(): Promise<number> {
       }
 
       if (session.env_info === null && outcome.ok) {
-        session.env_info = await readJson<EnvInfo>(ENV_PATH)
+        session.env_info = await readJson<EnvInfo>(paths.envPath)
         session.env_drift = await compareWithPreviousSession(session.env_info, sessionPath)
-        printEnvInfo(session.env_info, session.env_drift)
+        printEnvInfo(session.env_info, session.env_drift, paths)
       }
 
       consecutiveErrors = outcome.ok && !record.row?.error ? 0 : consecutiveErrors + 1
@@ -238,7 +243,7 @@ async function main(): Promise<number> {
     await shutdown()
   }
 
-  printSummary(session, sessionPath)
+  printSummary(session, sessionPath, paths)
   const failed = session.runs.filter((r) => !r.ok).length
   return session.aborted || failed > 0 ? 1 : 0
 }
@@ -322,11 +327,19 @@ async function recoverPage(page: Page, browserInstance: Browser, url: string): P
 async function startRunner({
   target,
   port,
+  paths,
 }: {
   target: string
   port: number
+  paths: DataPaths
 }): Promise<ChildProcess> {
-  const child = spawnRunner({ target, port })
+  const child = spawnRunner({
+    target,
+    port,
+    csvPath: paths.csvPath,
+    envPath: paths.envPath,
+    dataDir: paths.dataDir,
+  })
   children.push(child)
   await waitForStdout(child, RUNNER_READY, { name: 'runner', timeoutMs: STARTUP_TIMEOUT_MS })
   const { stdout, stderr } = streamsOf(child, 'runner')

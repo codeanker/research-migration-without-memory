@@ -68,6 +68,12 @@ vite.config.ts.timestamp-*
 !/data/env.json
 !/data/sessions/
 !/data/sessions/*.json
+!/data/live/
+/data/live/*
+!/data/live/results.csv
+!/data/live/env.json
+!/data/live/sessions/
+!/data/live/sessions/*.json
 /data/results-*.csv
 
 /data/smoke-results.csv

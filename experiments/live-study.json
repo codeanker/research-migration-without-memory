@@ -1,0 +1,42 @@
+{
+  "label": "live-study",
+  "target": "e2b",
+  "repeats": 30,
+  "seed": 20261019,
+  "dataDir": "data/live",
+  "cells": [
+    { "stage": "large", "strategy": "full" },
+    { "stage": "large", "strategy": "manifest" },
+    { "stage": "large", "strategy": "precopy" },
+    { "stage": "large", "strategy": "manifest-push" }
+  ],
+  "logIntervalMs": 1000,
+  "stopOffset": { "mode": "uniform" },
+  "warmupStateWrites": 3,
+  "runTimeoutMs": 300000,
+  "maxConsecutiveErrors": 3,
+  "reloadBetweenRuns": true,
+  "notes": [
+    "The design is 4 strategies on stage large at 30 repetitions, 120 runs, in its own session.",
+    "full and manifest run again here, so every comparison stays within one session: E2B dispatch",
+    "latency and the client uplink vary between sessions.",
+    "precopy and manifest-push add a push phase before the stop. While the heartbeat keeps running,",
+    "the browser records the dirty set under work/, exports the full image (precopy) or work/",
+    "without node_modules (manifest-push) and sends it to POST /prepare. The runner creates the",
+    "target, unpacks and, for manifest-push, runs npm ci. The stop phase then sends only the dirty",
+    "set plus state.json and process-snapshot.json and unpacks it over the prepared work/. No boot",
+    "and no install fall into the interruption. One push round only.",
+    "Data goes to data/live/, never into data/results.csv.",
+    "seed rule, the same as in main-study.json and fixed before the search: the first seed from",
+    "20261019 upward whose 4-cell dry-run plan has every cell at every position at least once.",
+    "Tried 20261019 (0 cells miss a position), the only seed tried.",
+    "Primary comparison, fixed before the runs: interruption_ms, median difference precopy against",
+    "full and manifest-push against manifest within this session, bootstrap CI and permutation test",
+    "as in the main study, under the restricted randomization of the seed rule.",
+    "Idle reference of push_source_ticks: the idle tick rate of this session, from the regression of",
+    "state_loss_ticks on stop_offset_actual_ms over all 120 rows. Rows with stop_offset_actual_ms",
+    "outside [0, logIntervalMs) are named by run_id, not dropped.",
+    "Before the full run: --repeats 1 as an acceptance check against E2B, with DATA_DIR, CSV_PATH",
+    "and ENV_PATH in a scratch directory, so data/live/ holds only the 120 runs."
+  ]
+}

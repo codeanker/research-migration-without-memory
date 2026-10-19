@@ -15,6 +15,26 @@ test('error stays the last column, so a comma in it cannot shift a number', () =
   assert.equal(CSV_COLUMNS.at(-1), 'error')
 })
 
+test('the push columns follow host_stall_ms, the free-text columns stay last', () => {
+  const at = CSV_COLUMNS.indexOf('host_stall_ms')
+  assert.deepEqual(CSV_COLUMNS.slice(at + 1), [
+    'push_export_ms',
+    'push_bytes',
+    'push_upload_ms',
+    'push_boot_ms',
+    'push_unpack_ms',
+    'push_install_ms',
+    'prepare_ms',
+    'prepare_to_stop_ms',
+    'delta_bytes',
+    'delta_files',
+    'push_source_ticks',
+    'push_expected_ticks',
+    'sanity_warnings',
+    'error',
+  ])
+})
+
 test('appendCsvRow refuses a key that is not a column', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'csv-test-'))
   try {
