@@ -16,8 +16,4 @@ export default defineConfig({
     headers: CROSS_ORIGIN_ISOLATION,
     proxy: { '/run': RUNNER_PROXY, '/prepare': RUNNER_PROXY, '/clock': RUNNER_PROXY },
   },
-  preview: {
-    host: true,
-    headers: CROSS_ORIGIN_ISOLATION,
-  },
 })

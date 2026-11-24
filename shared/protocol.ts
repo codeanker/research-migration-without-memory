@@ -1,4 +1,3 @@
-
 export const HEADER = {
   exportMs: 'X-Export-Ms',
   stage: 'X-Stage',
@@ -25,11 +24,9 @@ export const HEADER = {
   pushExpectedTicks: 'X-Push-Expected-Ticks',
 } as const
 
-export type HeaderName = (typeof HEADER)[keyof typeof HEADER]
+type HeaderName = (typeof HEADER)[keyof typeof HEADER]
 
-export const REQUEST_HEADER_NAMES: HeaderName[] = Object.values(HEADER)
-
-export const CORS_ALLOW_HEADERS = [...REQUEST_HEADER_NAMES, 'Content-Type'].join(', ')
+export const CORS_ALLOW_HEADERS = [...Object.values(HEADER), 'Content-Type'].join(', ')
 
 export function headerValue(
   headers: Record<string, string | string[] | undefined>,

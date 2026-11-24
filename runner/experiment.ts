@@ -39,7 +39,6 @@ const execFileAsync = promisify(execFile)
 const BROWSER_DIR = path.join(REPO_ROOT, 'browser')
 
 const BROWSER_CHANNEL = 'chromium'
-const STARTUP_TIMEOUT_MS = 60000
 const PAGE_READY_TIMEOUT_MS = 60000
 
 interface RunnerArgs {
@@ -81,20 +80,14 @@ async function main(): Promise<number> {
   }
 
   if (config.target === 'e2b' && !process.env.E2B_API_KEY) {
-    throw new Error(
-      'E2B_API_KEY is not set (environment or .env). With target=e2b every run would fail; ' +
-        'use --target local for a control run.'
-    )
+    throw new Error('E2B_API_KEY is not set (environment or .env)')
   }
 
   if (config.smokeFirst) {
     console.log('\n[experiment] Smoke test against target=local ...')
     const smoke = await runSmoke()
     if (!smoke.ok) {
-      throw new Error(
-        `smoke test failed (exit ${smoke.code}) - runner or adapter interface is broken, ` +
-          'session aborted before E2B time is spent'
-      )
+      throw new Error(`smoke test failed (exit ${smoke.code}), session aborted`)
     }
     console.log('[experiment] Smoke test OK.')
   }
@@ -157,7 +150,7 @@ async function main(): Promise<number> {
       const label =
         `[${entry.seq}/${plan.length}] ${entry.cellKey} rep ${entry.rep}` +
         `${entry.firstRun ? ' [first]' : ''}` +
-        ` stop offset ${entry.stopOffsetTargetMs === null ? 'off' : entry.stopOffsetTargetMs.toFixed(0) + 'ms'}`
+        ` stop offset ${entry.stopOffsetTargetMs.toFixed(0)}ms`
       console.log(`\n[experiment] ${label}`)
 
       let outcome: DriveOutcome
@@ -184,8 +177,7 @@ async function main(): Promise<number> {
       if (durationMs > config.runTimeoutMs && !outcome.timedOut) {
         warnings.push(
           `the run took ${(durationMs / 1000).toFixed(0)}s, longer than ` +
-            `runTimeoutMs=${config.runTimeoutMs}, without the timeout firing - the host was ` +
-            'suspended during the run. Check host_stall_ms for this row.'
+            `runTimeoutMs=${config.runTimeoutMs}, without the timeout firing`
         )
       }
 
@@ -195,10 +187,10 @@ async function main(): Promise<number> {
         duration_ms: durationMs,
         ok: outcome.ok,
         timed_out: outcome.timedOut === true,
-        message: outcome.message ?? null,
+        message: outcome.message,
         run_id: typeof outcome.row?.run_id === 'string' ? outcome.row.run_id : null,
         row: pickRowFields(outcome.row),
-        stop_offset_actual_ms: outcome.stop_offset_actual_ms ?? null,
+        stop_offset_actual_ms: outcome.stop_offset_actual_ms,
         runner_warnings: warnings,
       }
       session.runs.push(record)
@@ -243,7 +235,7 @@ async function main(): Promise<number> {
     await shutdown()
   }
 
-  printSummary(session, sessionPath, paths)
+  printSummary(session, sessionPath)
   const failed = session.runs.filter((r) => !r.ok).length
   return session.aborted || failed > 0 ? 1 : 0
 }
@@ -302,10 +294,7 @@ async function openPage(browserInstance: Browser, url: string): Promise<Page> {
   await waitForHandover(page)
   const isolated = await page.evaluate(() => window.crossOriginIsolated === true)
   if (!isolated) {
-    throw new Error(
-      'crossOriginIsolated is false in the automated Chromium - WebContainer cannot boot. ' +
-        'Check the COOP/COEP headers in browser/vite.config.ts.'
-    )
+    throw new Error('crossOriginIsolated is false in the automated Chromium')
   }
   return page
 }
@@ -332,7 +321,7 @@ async function startRunner({
   target: string
   port: number
   paths: DataPaths
-}): Promise<ChildProcess> {
+}): Promise<void> {
   const child = spawnRunner({
     target,
     port,
@@ -341,11 +330,10 @@ async function startRunner({
     dataDir: paths.dataDir,
   })
   children.push(child)
-  await waitForStdout(child, RUNNER_READY, { name: 'runner', timeoutMs: STARTUP_TIMEOUT_MS })
+  await waitForStdout(child, RUNNER_READY, { name: 'runner' })
   const { stdout, stderr } = streamsOf(child, 'runner')
   mirror(stdout, '  [runner]')
   mirror(stderr, '  [runner-err]')
-  return child
 }
 
 async function startVite({
@@ -360,12 +348,9 @@ async function startVite({
     env: { ...process.env, RUNNER_ORIGIN: `http://localhost:${runnerPort}` },
   })
   children.push(child)
-  const output = await waitForStdout(child, /Local:\s+\S*http:\/\//, {
-    name: 'vite',
-    timeoutMs: STARTUP_TIMEOUT_MS,
-  })
+  const output = await waitForStdout(child, /Local:\s+\S*http:\/\//, { name: 'vite' })
   mirror(streamsOf(child, 'vite').stderr, '  [vite-err]')
-  const match = /Local:\s+(http:\/\/\S+)/.exec(stripAnsi(output))
+  const match = /Local:\s+(http:\/\/\S+)/.exec(output)
   if (!match) throw new Error(`could not read the dev server URL from the Vite output: ${output}`)
   return match[1].replace(/\/$/, '')
 }
@@ -402,24 +387,18 @@ async function gitInfo(): Promise<{ commit: string | null; dirty: boolean | null
   }
 }
 
-type OverrideKeysOfType<T> = {
-  [K in keyof ConfigOverrides]-?: [Exclude<ConfigOverrides[K], undefined>] extends [T] ? K : never
-}[keyof ConfigOverrides]
-
 const NUMERIC_FLAGS = {
   repeats: 'repeats',
   seed: 'seed',
   'run-timeout-ms': 'runTimeoutMs',
   'max-consecutive-errors': 'maxConsecutiveErrors',
-  'stop-offset-ms': 'stopOffsetMs',
   'warmup-state-writes': 'warmupStateWrites',
-} as const satisfies Record<string, OverrideKeysOfType<number>>
+} as const
 
 const STRING_FLAGS = {
   target: 'target',
   label: 'label',
-  'stop-offset-mode': 'stopOffsetMode',
-} as const satisfies Record<string, OverrideKeysOfType<string>>
+} as const
 
 function setOverride<K extends keyof ConfigOverrides>(
   overrides: ConfigOverrides,
@@ -475,10 +454,6 @@ function splitTrimmed(value: string, separator: string): string[] {
 
 function splitWarnings(value: unknown): string[] {
   return typeof value === 'string' ? splitTrimmed(value, ';') : []
-}
-
-function stripAnsi(value: string): string {
-  return value.replace(/\[[0-9;]*m/g, '')
 }
 
 process.on('SIGINT', () => {

@@ -2,7 +2,7 @@ import { epochMsOf, fmt, fmtValue, num } from './util.ts'
 import type { CsvNumber, Row } from './csv.ts'
 import { HEARTBEAT_TICK_MS } from '../shared/heartbeat.ts'
 
-export interface InterruptionInput {
+interface InterruptionInput {
   stopAtMs: number | null
   lastSourceTickMs: number | null
   firstTickAt: string
@@ -11,7 +11,7 @@ export interface InterruptionInput {
   restoreMarkNs: bigint | null
 }
 
-export interface InterruptionResult {
+interface InterruptionResult {
   interruption_ms: CsvNumber
   interruption_gap_ms: CsvNumber
   interruption_split_ms: CsvNumber
@@ -32,8 +32,9 @@ export function computeInterruption({
     interruption_split_ms: '',
     restore_dispatch_ms: '',
   }
-  if (restoreIssuedAt !== null && restoreMarkNs) {
-    out.restore_dispatch_ms = Number(restoreMarkNs / 1000000n) - restoreIssuedAt - offsetMs
+  const markTargetMs = restoreMarkNs ? Number(restoreMarkNs / 1000000n) : null
+  if (restoreIssuedAt !== null && markTargetMs !== null) {
+    out.restore_dispatch_ms = markTargetMs - restoreIssuedAt - offsetMs
   }
 
   const firstTickTargetMs = epochMsOf(firstTickAt)
@@ -43,8 +44,7 @@ export function computeInterruption({
   if (stopAtMs !== null) out.interruption_ms = firstTickRunnerMs - stopAtMs
   if (lastSourceTickMs !== null) out.interruption_gap_ms = firstTickRunnerMs - lastSourceTickMs
 
-  if (stopAtMs !== null && restoreIssuedAt !== null && restoreMarkNs) {
-    const markTargetMs = Number(restoreMarkNs / 1000000n)
+  if (stopAtMs !== null && restoreIssuedAt !== null && markTargetMs !== null) {
     out.interruption_split_ms = restoreIssuedAt - stopAtMs + (firstTickTargetMs - markTargetMs)
   }
   return out
@@ -152,9 +152,9 @@ export function checkTimingSanity(
 
   const splitMs = row.interruption_split_ms
   const dispatchMs = row.restore_dispatch_ms
+  const rttTolerance = Math.max(num(row.target_clock_rtt_ms) / 2, 5)
   if (typeof dispatchMs === 'number') {
-    const floor = -Math.max(num(row.target_clock_rtt_ms) / 2, 5)
-    if (dispatchMs < floor) {
+    if (dispatchMs < -rttTolerance) {
       warn(
         `restore_dispatch_ms=${dispatchMs.toFixed(1)}ms is negative beyond half a round trip: ` +
           `the restore mark inside the target converts to a point in time before the command that ` +
@@ -169,14 +169,13 @@ export function checkTimingSanity(
   const firstTickTargetMs = epochMsOf(row.first_tick_at)
   if (firstTickTargetMs !== null) {
     const firstTickRunnerMs = firstTickTargetMs - num(row.target_clock_offset_ms)
-    const bracketTolerance = Math.max(num(row.target_clock_rtt_ms) / 2, 5)
-    if (restoreIssuedAt !== null && firstTickRunnerMs < restoreIssuedAt - bracketTolerance) {
+    if (restoreIssuedAt !== null && firstTickRunnerMs < restoreIssuedAt - rttTolerance) {
       warn(
         `the first tick converts to a point in time ${(restoreIssuedAt - firstTickRunnerMs).toFixed(1)}ms ` +
           `before the restart command went out - the clock offset is wrong.`
       )
     }
-    if (detectAt !== null && firstTickRunnerMs > detectAt + bracketTolerance) {
+    if (detectAt !== null && firstTickRunnerMs > detectAt + rttTolerance) {
       warn(
         `the first tick converts to a point in time ${(firstTickRunnerMs - detectAt).toFixed(1)}ms ` +
           `after the poll had already read it - the clock offset is wrong.`
@@ -200,7 +199,7 @@ export function checkTimingSanity(
   return warnings
 }
 
-export type ResumeCheckRow = Pick<
+type ResumeCheckRow = Pick<
   Row,
   'first_tick_counter' | 'resume_tick_counter' | 'counter_expected' | 'resume_state_counter'
 >

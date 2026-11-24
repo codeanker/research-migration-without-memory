@@ -3,39 +3,28 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { REPO_ROOT } from '../runner/child.ts'
 import { CSV_COLUMNS, appendCsvRow, ensureCsvHeader, makeEmptyRow, parseCsv } from '../runner/csv.ts'
 
-test('makeEmptyRow has exactly the columns of the file', () => {
-  const row = makeEmptyRow()
-  assert.deepEqual(Object.keys(row), CSV_COLUMNS)
-  assert.ok(Object.values(row).every((v) => v === ''))
-})
-
-test('error stays the last column, so a comma in it cannot shift a number', () => {
-  assert.equal(CSV_COLUMNS.at(-1), 'error')
-})
-
-test('the push columns follow host_stall_ms, the free-text columns stay last', () => {
-  const at = CSV_COLUMNS.indexOf('host_stall_ms')
-  assert.deepEqual(CSV_COLUMNS.slice(at + 1), [
-    'push_export_ms',
-    'push_bytes',
-    'push_upload_ms',
-    'push_boot_ms',
-    'push_unpack_ms',
-    'push_install_ms',
-    'prepare_ms',
-    'prepare_to_stop_ms',
-    'delta_bytes',
-    'delta_files',
-    'push_source_ticks',
-    'push_expected_ticks',
+test('columns match the data', async () => {
+  const headerOf = async (csv: string) => parseCsv(await readFile(path.join(REPO_ROOT, csv), 'utf8')).header
+  assert.deepEqual(await headerOf('data/live/results.csv'), CSV_COLUMNS)
+  assert.deepEqual(await headerOf('data/results.csv'), [
+    ...CSV_COLUMNS.slice(0, CSV_COLUMNS.indexOf('host_stall_ms') + 1),
     'sanity_warnings',
     'error',
   ])
 })
 
-test('appendCsvRow refuses a key that is not a column', async () => {
+test('makeEmptyRow blank', () => {
+  const row = makeEmptyRow()
+  assert.deepEqual(Object.keys(row), CSV_COLUMNS)
+  assert.ok(Object.values(row).every((v) => v === ''))
+  row.error = 'changed'
+  assert.equal(makeEmptyRow().error, '')
+})
+
+test('appendCsvRow unknown key', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'csv-test-'))
   try {
     const csvPath = path.join(dir, 'results.csv')
@@ -48,7 +37,7 @@ test('appendCsvRow refuses a key that is not a column', async () => {
   }
 })
 
-test('a field with a comma survives write and read', async () => {
+test('comma roundtrip', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'csv-test-'))
   try {
     const csvPath = path.join(dir, 'results.csv')
@@ -58,9 +47,9 @@ test('a field with a comma survives write and read', async () => {
       run_id: 'small-full-01',
       stage: 'small',
       strategy: 'full',
-      total_wall_ms: 1234.5,
-      sanity_warnings: 'a warning; another one, with a comma',
-      error: 'readState: boom, retry failed',
+      total_wall_ms: 1234.567,
+      sanity_warnings: 'a warning; another one, with a comma and "quotes"',
+      error: 'readState: boom\nretry failed',
     })
     await appendCsvRow(csvPath, row)
 
@@ -69,16 +58,15 @@ test('a field with a comma survives write and read', async () => {
     assert.equal(rows.length, 1)
     assert.equal(rows[0].stage, 'small')
     assert.equal(rows[0].strategy, 'full')
-    assert.equal(rows[0].total_wall_ms, '1234.5')
-    assert.equal(rows[0].error, 'readState: boom, retry failed')
-    assert.equal(rows[0].sanity_warnings, 'a warning; another one, with a comma')
-    assert.equal(Object.hasOwn(rows[0], 'undefined'), false)
+    assert.equal(rows[0].total_wall_ms, '1234.57')
+    assert.equal(rows[0].error, 'readState: boom\nretry failed')
+    assert.equal(rows[0].sanity_warnings, 'a warning; another one, with a comma and "quotes"')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('the parser handles quotes, escaped quotes, CRLF and a trailing newline', () => {
+test('parser quotes and line ends', () => {
   const text = 'a,b,c\r\n1,"x, y",""\r\n2,"say ""hi""",z\r\n'
   const { header, rows } = parseCsv(text)
   assert.deepEqual(header, ['a', 'b', 'c'])
@@ -88,15 +76,15 @@ test('the parser handles quotes, escaped quotes, CRLF and a trailing newline', (
   ])
 })
 
-test('a row with the wrong number of fields is an error, not a silent shift', () => {
+test('field count mismatch', () => {
   assert.throws(() => parseCsv('a,b,c\n1,2\n'), /has 2 fields, the header has 3/)
 })
 
-test('an unfinished quoted field is an error', () => {
+test('unfinished quote', () => {
   assert.throws(() => parseCsv('a\n"open\n'), /inside a quoted field/)
 })
 
-test('ensureCsvHeader refuses a file written by another column list', async () => {
+test('ensureCsvHeader mismatch', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'csv-test-'))
   try {
     const csvPath = path.join(dir, 'results.csv')

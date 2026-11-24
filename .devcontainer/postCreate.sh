@@ -2,12 +2,14 @@
 set -e
 
 node -v
-corepack enable
-corepack prepare pnpm@11.18.0 --activate
+npm install -g pnpm@12.14.0
 pnpm -v
 
+curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+uv --version
+
 pnpm install
-npx --yes playwright install --with-deps chromium
+pnpm exec playwright install --with-deps chromium
 
 apt-get update
 apt-get install -y --no-install-recommends \
@@ -16,7 +18,6 @@ apt-get install -y --no-install-recommends \
   texlive-latex-extra \
   texlive-fonts-recommended \
   texlive-fonts-extra \
-  texlive-lang-german \
   texlive-bibtex-extra \
   texlive-publishers \
   texlive-science \

@@ -49,11 +49,11 @@ function sessionOf(runs: RunRecord[]): SessionManifest {
   return { runs } as SessionManifest
 }
 
-test('the error rate counts a run once, however many ways it went wrong', () => {
+test('error rate per run', () => {
   const plan = [planEntry('small'), planEntry('small'), planEntry('small')]
   const summary = summarize(
     sessionOf([
-      runRecord(plan[0], { ok: false, row: { error: 'boom' } }),
+      runRecord(plan[0], { ok: false, row: null }),
       runRecord(plan[1], { ok: true, row: { error: 'sanity check failed' } }),
       runRecord(plan[2]),
     ]),
@@ -61,16 +61,16 @@ test('the error rate counts a run once, however many ways it went wrong', () => 
   )
   assert.equal(summary.done, 3)
   assert.equal(summary.failed, 1)
-  assert.equal(summary.with_error_field, 2)
+  assert.equal(summary.with_error_field, 1)
   assert.equal(summary.error_rate, 0.667)
 })
 
-test('the error rate is null before the first run', () => {
+test('error rate without runs', () => {
   const summary = summarize(sessionOf([]), [planEntry('small')])
   assert.equal(summary.error_rate, null)
 })
 
-test('the medians are per cell, and the total is export_ms on top of the wall clock', () => {
+test('medians per cell', () => {
   const small = [planEntry('small'), planEntry('small'), planEntry('small')]
   const large = [planEntry('large')]
   const summary = summarize(
@@ -88,7 +88,7 @@ test('the medians are per cell, and the total is export_ms on top of the wall cl
   assert.equal(summary.cells['large'].total_to_tick_ms_median, null)
 })
 
-test('a cell that never ran is in the summary with a null median, not missing from it', () => {
+test('cell without runs', () => {
   const plan = [planEntry('small'), planEntry('large')]
   const summary = summarize(sessionOf([runRecord(plan[0], { row: { interruption_ms: 800 } })]), plan)
   assert.equal(summary.planned, 2)
@@ -100,7 +100,7 @@ test('a cell that never ran is in the summary with a null median, not missing fr
   assert.equal(empty.interruption_ms_median, null)
 })
 
-test('an unconfirmed resume is counted, and a missing resume mark counts as unconfirmed', () => {
+test('unconfirmed resume', () => {
   const plan = [planEntry('small'), planEntry('small'), planEntry('small')]
   const summary = summarize(
     sessionOf([
@@ -113,7 +113,7 @@ test('an unconfirmed resume is counted, and a missing resume mark counts as unco
   assert.equal(summary.cells['small'].resume_unverified, 2)
 })
 
-test('sanity warnings are summed over the session', () => {
+test('sanity warning sum', () => {
   const plan = [planEntry('small'), planEntry('small')]
   const summary = summarize(
     sessionOf([

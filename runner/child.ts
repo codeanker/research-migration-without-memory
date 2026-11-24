@@ -10,7 +10,7 @@ export const RUNNER_READY = 'Listening on'
 
 const DEFAULT_START_TIMEOUT_MS = 60000
 
-export interface RunnerOptions {
+interface RunnerOptions {
   target: string
   port: number
   csvPath?: string
@@ -42,7 +42,7 @@ export function streamsOf(
   return { stdout: child.stdout, stderr: child.stderr }
 }
 
-export interface WaitOptions {
+interface WaitOptions {
   name: string
   timeoutMs?: number
   echo?: { stdout: string; stderr: string }

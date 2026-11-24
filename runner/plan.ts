@@ -4,11 +4,8 @@ import type { AdapterName } from '../targets/registry.ts'
 import { MEASUREMENT_STAGES, STRATEGIES, isMeasurementStage, isStrategy } from '../shared/stages.ts'
 import type { MeasurementStage, Strategy } from '../shared/stages.ts'
 
-export type StopOffsetMode = 'uniform' | 'fixed' | 'none'
-
-export interface StopOffset {
-  mode: StopOffsetMode
-  valueMs?: number
+interface StopOffset {
+  mode: 'uniform'
 }
 
 export interface Cell {
@@ -16,7 +13,7 @@ export interface Cell {
   strategy: Strategy
 }
 
-export interface DraftCell {
+interface DraftCell {
   stage: string
   strategy?: string
 }
@@ -27,7 +24,7 @@ export interface FileConfig {
   repeats?: number
   cells?: DraftCell[]
   logIntervalMs?: number
-  stopOffset?: { mode?: string; valueMs?: number }
+  stopOffset?: { mode?: string }
   warmupStateWrites?: number
   runTimeoutMs?: number
   maxConsecutiveErrors?: number
@@ -48,19 +45,17 @@ export interface ConfigOverrides {
   warmupStateWrites?: number
   reloadBetweenRuns?: boolean
   smokeFirst?: boolean
-  stopOffsetMode?: string
-  stopOffsetMs?: number
   stages?: string[]
   strategies?: string[]
 }
 
-export interface DraftConfig {
+interface DraftConfig {
   label: string
   target: string
   repeats: number
   cells: DraftCell[]
   logIntervalMs: number
-  stopOffset: { mode: string; valueMs?: number }
+  stopOffset: { mode: string }
   warmupStateWrites: number
   runTimeoutMs: number
   maxConsecutiveErrors: number
@@ -82,7 +77,7 @@ export interface ExperimentConfig extends DraftConfig {
   seed: number
 }
 
-export const DEFAULTS: DraftConfig = {
+const DEFAULTS: DraftConfig = {
   label: 'unnamed',
   target: 'e2b',
   repeats: 10,
@@ -96,26 +91,16 @@ export const DEFAULTS: DraftConfig = {
   smokeFirst: null,
 }
 
-const STOP_OFFSET_MODES = new Set<string>(['uniform', 'fixed', 'none'])
-
 export function resolveConfig(
   fileConfig: FileConfig = {},
   overrides: ConfigOverrides = {}
 ): ExperimentConfig {
-  const { stopOffsetMode, stopOffsetMs, ...plainOverrides } = overrides
   const { stopOffset: fileStopOffset, ...plainFileConfig } = fileConfig
   const config: DraftConfig = {
     ...DEFAULTS,
     ...stripUndefined(plainFileConfig),
-    ...stripUndefined(plainOverrides),
-    stopOffset: {
-      mode: stopOffsetMode ?? fileStopOffset?.mode ?? DEFAULTS.stopOffset.mode,
-      valueMs: fileStopOffset?.valueMs,
-    },
-  }
-  if (stopOffsetMs !== undefined) {
-    config.stopOffset.mode = 'fixed'
-    config.stopOffset.valueMs = stopOffsetMs
+    ...stripUndefined(overrides),
+    stopOffset: { mode: fileStopOffset?.mode ?? DEFAULTS.stopOffset.mode },
   }
 
   if (overrides.stages || overrides.strategies) {
@@ -125,7 +110,7 @@ export function resolveConfig(
   }
 
   if (config.seed === undefined || config.seed === null) {
-    config.seed = Math.floor(Date.now() % 2147483647)
+    config.seed = Date.now() % 2147483647
     config.seedGenerated = true
   }
   if (config.smokeFirst === null) config.smokeFirst = config.target !== 'local'
@@ -139,13 +124,9 @@ function validate(config: DraftConfig): asserts config is ExperimentConfig {
     throw new Error('config: cells is empty - nothing to measure')
   }
   for (const cell of config.cells) {
-    if (typeof cell.stage !== 'string' || cell.stage.trim() === '') {
-      throw new Error(`config: cell without a stage: ${JSON.stringify(cell)}`)
-    }
     if (!isMeasurementStage(cell.stage)) {
       throw new Error(
-        `config: unknown stage "${cell.stage}" - known: ${MEASUREMENT_STAGES.join(', ')}. ` +
-          'Add it to shared/stages.ts and to browser/src/payload.ts first.'
+        `config: unknown stage "${cell.stage}" - known: ${MEASUREMENT_STAGES.join(', ')}`
       )
     }
     if (typeof cell.strategy !== 'string' || !isStrategy(cell.strategy)) {
@@ -165,23 +146,8 @@ function validate(config: DraftConfig): asserts config is ExperimentConfig {
   if (!Number.isInteger(config.repeats) || config.repeats < 1) {
     throw new Error(`config: repeats must be >= 1, got ${config.repeats}`)
   }
-  if (!STOP_OFFSET_MODES.has(config.stopOffset.mode)) {
-    throw new Error(
-      `config: stopOffset.mode must be one of ${[...STOP_OFFSET_MODES].join(', ')}, ` +
-        `got "${config.stopOffset.mode}"`
-    )
-  }
-  if (config.stopOffset.mode === 'fixed') {
-    const value = config.stopOffset.valueMs
-    if (value === undefined || !Number.isFinite(value) || value < 0) {
-      throw new Error(`config: stopOffset.valueMs must be >= 0 for mode "fixed", got ${value}`)
-    }
-    if (value >= config.logIntervalMs) {
-      throw new Error(
-        `config: stopOffset.valueMs=${value} is not smaller than the logging interval ` +
-          `(${config.logIntervalMs}ms) - the stop would land after the next state write`
-      )
-    }
+  if (config.stopOffset.mode !== 'uniform') {
+    throw new Error(`config: stopOffset.mode must be uniform, got "${config.stopOffset.mode}"`)
   }
   if (
     config.dataDir !== undefined &&
@@ -193,9 +159,6 @@ function validate(config: DraftConfig): asserts config is ExperimentConfig {
     throw new Error(
       `config: target must be one of ${ADAPTER_NAMES.join(', ')}, got "${config.target}"`
     )
-  }
-  if (config.seed === undefined || config.seed === null) {
-    throw new Error('config: seed is missing - resolveConfig draws one when the config has none')
   }
 }
 
@@ -231,7 +194,7 @@ export interface PlanEntry {
   rep: number
   runLabel: string
   runId: string
-  stopOffsetTargetMs: number | null
+  stopOffsetTargetMs: number
   positionInCycle: number
   firstRun: boolean
   firstRunOfCell: boolean
@@ -244,12 +207,12 @@ export function buildPlan(config: ExperimentConfig): PlanEntry[] {
   interface Draw {
     cell: Cell
     rep: number
-    stopOffsetTargetMs: number | null
+    stopOffsetTargetMs: number
   }
   const draw = (cell: Cell, rep: number): Draw => ({
     cell,
     rep,
-    stopOffsetTargetMs: drawStopOffset(config.stopOffset, config.logIntervalMs, offsetRng),
+    stopOffsetTargetMs: drawStopOffset(config.logIntervalMs, offsetRng),
   })
 
   const groups: Draw[][] = range(config.repeats).map((rep) =>
@@ -283,7 +246,7 @@ function cellKeyOf(cell: DraftCell): string {
   return `${cell.stage}-${cell.strategy}`
 }
 
-function shuffleInPlace<T>(items: T[], rng: () => number): void {
+export function shuffleInPlace<T>(items: T[], rng: () => number): void {
   for (let i = items.length - 1; i > 0; i -= 1) {
     const j = Math.floor(rng() * (i + 1))
     ;[items[i], items[j]] = [items[j], items[i]]
@@ -305,7 +268,6 @@ export function stopOffsetCoverage(
 ): Record<string, CoverageEntry> {
   const byCell: Record<string, { interval: number; offsets: number[] }> = {}
   for (const entry of plan) {
-    if (entry.stopOffsetTargetMs === null) continue
     const cell = (byCell[entry.cellKey] ??= { interval: entry.logIntervalMs, offsets: [] })
     cell.offsets.push(entry.stopOffsetTargetMs)
   }
@@ -358,13 +320,7 @@ export function orderCoverage(
   )
 }
 
-function drawStopOffset(
-  stopOffset: StopOffset,
-  logIntervalMs: number,
-  rng: () => number
-): number | null {
-  if (stopOffset.mode === 'none') return null
-  if (stopOffset.mode === 'fixed') return stopOffset.valueMs ?? null
+function drawStopOffset(logIntervalMs: number, rng: () => number): number {
   return Math.round(rng() * logIntervalMs * 100) / 100
 }
 

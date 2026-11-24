@@ -1,4 +1,4 @@
-export interface Timed<T> {
+interface Timed<T> {
   value: T
   ms: number
 }
@@ -16,7 +16,7 @@ export async function timed<T>(fn: () => Promise<T> | T): Promise<Timed<T>> {
 export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   return Promise.race([
-    Promise.resolve(promise).finally(() => clearTimeout(timer)),
+    promise.finally(() => clearTimeout(timer)),
     new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(message)), ms)
     }),

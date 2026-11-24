@@ -4,14 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Measurement harness: handover cost from WebContainer to a server-side sandbox (E2B)",
-  "packageManager": "pnpm@11.18.0",
+  "packageManager": "pnpm@12.14.0",
   "scripts": {
-    "runner": "node runner/server.ts",
     "test": "node --test 'test/*.test.ts'",
     "smoke": "node runner/smoke-local.ts",
     "browser": "pnpm --filter browser dev",
     "experiment": "node runner/experiment.ts --config experiments/main-study.json",
-    "experiment:local": "node runner/experiment.ts --config experiments/main-study.json --target local --repeats 1 --no-smoke",
     "experiment:live": "node runner/experiment.ts --config experiments/live-study.json",
     "typecheck": "tsc -p tsconfig.json && pnpm --filter browser typecheck"
   },

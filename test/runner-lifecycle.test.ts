@@ -7,12 +7,14 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { RUNNER_READY, spawnRunner, waitForStdout } from '../runner/child.ts'
+import { parseCsv } from '../runner/csv.ts'
 import { buildFakeExport } from '../runner/fake-export.ts'
 import { HEADER } from '../shared/protocol.ts'
 import { deltaIncludes } from '../shared/push.ts'
-import { sleep } from '../shared/timing.ts'
+import { sleep, withTimeout } from '../shared/timing.ts'
 
 const START_TIMEOUT_MS = 20000
+const STOP_TIMEOUT_MS = 25000
 const TTL_MS = 1000
 const LOG_INTERVAL_MS = 1000
 
@@ -34,8 +36,18 @@ async function startRunner(port: number, ttlMs = TTL_MS): Promise<RunningRunner>
   })
   delete process.env.PREPARE_TTL_MS
   const stop = async () => {
-    if (!child.killed) child.kill('SIGKILL')
-    await rm(outDir, { recursive: true, force: true })
+    try {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise((resolve) => child.once('exit', resolve))
+        child.kill('SIGTERM')
+        await withTimeout(exited, STOP_TIMEOUT_MS, 'runner did not exit after SIGTERM').catch((err: unknown) => {
+          child.kill('SIGKILL')
+          throw err
+        })
+      }
+    } finally {
+      await rm(outDir, { recursive: true, force: true })
+    }
   }
   try {
     await waitForStdout(child, RUNNER_READY, { name: 'runner', timeoutMs: START_TIMEOUT_MS })
@@ -46,24 +58,26 @@ async function startRunner(port: number, ttlMs = TTL_MS): Promise<RunningRunner>
   return { child, outDir, stop }
 }
 
-test('a second POST /run is refused with 409 while one run is in flight', async () => {
+test('concurrent /run gets 409', async () => {
   const port = 8811
   const runner = await startRunner(port)
   let held: ClientRequest | undefined
   try {
-    held = http.request(
+    const first = http.request(
       {
         port,
         path: '/run',
         method: 'POST',
-        headers: { [HEADER.exportMs]: '1', [HEADER.stage]: 'smoke' },
+        headers: { [HEADER.exportMs]: '1', [HEADER.stage]: 'smoke', Expect: '100-continue' },
       },
       (res) => res.resume()
     )
-    held.on('error', () => {})
-    held.write('x')
+    held = first
+    first.on('error', () => {})
+    const continued = new Promise((resolve) => first.once('continue', resolve))
+    first.flushHeaders()
+    await continued
 
-    await sleep(300)
     const second = await fetch(`http://localhost:${port}/run`, {
       method: 'POST',
       headers: { [HEADER.exportMs]: '1', [HEADER.stage]: 'smoke' },
@@ -78,7 +92,7 @@ test('a second POST /run is refused with 409 while one run is in flight', async 
   }
 })
 
-test('SIGTERM in the middle of a run destroys the target that is still alive', async () => {
+test('SIGTERM during run', async () => {
   const port = 8812
   const logIntervalMs = 4000
   const before = await localTargetDirs()
@@ -167,6 +181,11 @@ async function runDelta(
       [HEADER.lastSourceTickAt]: new Date(stopAt - 30).toISOString(),
       [HEADER.killToExportMs]: '1',
       [HEADER.clientNow]: new Date().toISOString(),
+      [HEADER.pushExportMs]: '10',
+      [HEADER.prepareMs]: '200',
+      [HEADER.prepareToStopMs]: '30',
+      [HEADER.pushSourceTicks]: '7',
+      [HEADER.pushExpectedTicks]: '8',
       ...(token ? { [HEADER.prepareToken]: token } : {}),
     },
     body: zip,
@@ -177,7 +196,7 @@ async function newTargetDirs(before: string[]): Promise<string[]> {
   return (await localTargetDirs()).filter((n) => !before.includes(n))
 }
 
-test('SIGTERM after /prepare destroys the prepared target', async () => {
+test('SIGTERM after /prepare', async () => {
   const port = 8814
   const before = await localTargetDirs()
   const runner = await startRunner(port, 60000)
@@ -194,35 +213,50 @@ test('SIGTERM after /prepare destroys the prepared target', async () => {
   }
 })
 
-test('each prepared target has its own TTL, a used one never expires, an unused one is destroyed', async () => {
+test('prepare TTL', async () => {
   const port = 8815
   const before = await localTargetDirs()
   const runner = await startRunner(port)
   try {
-    const preparedAtA = performance.now()
     const tokenA = await prepareToken(port, 1)
     const runA = await runDelta(port, 2, 'precopy', tokenA)
-    const rowA = (await runA.json()) as { error?: string }
-    assert.equal(runA.status, 200, rowA.error)
-
-    const tokenB = await prepareToken(port, 1)
-    const untilDeadlineA = preparedAtA + TTL_MS + 100 - performance.now()
-    if (untilDeadlineA > 0) await sleep(untilDeadlineA)
-    const runB = await runDelta(port, 2, 'precopy', tokenB)
-    const rowB = (await runB.json()) as { error?: string }
-    assert.equal(runB.status, 200, rowB.error)
-    assert.deepEqual(await newTargetDirs(before), [])
+    const rowA = (await runA.json()) as Record<string, unknown>
+    assert.equal(runA.status, 200, String(rowA.error))
+    assert.equal(rowA.error, '')
+    assert.equal(rowA.resume_verified, true)
+    assert.equal(rowA.delta_files, 3)
+    assert.ok(Number(rowA.push_bytes) > Number(rowA.payload_bytes), `push_bytes ${rowA.push_bytes}`)
+    assert.equal(rowA.push_export_ms, 10)
+    assert.equal(rowA.prepare_ms, 200)
+    assert.equal(rowA.prepare_to_stop_ms, 30)
+    assert.equal(rowA.push_source_ticks, 7)
+    assert.equal(rowA.push_expected_ticks, 8)
+    assert.equal(rowA.boot_ms, '')
+    const reused = await runDelta(port, 2, 'precopy', tokenA)
+    assert.equal(reused.status, 500)
+    assert.match(((await reused.json()) as { error: string }).error, /needs a valid/)
 
     await prepareToken(port, 1)
-    assert.equal((await newTargetDirs(before)).length, 1)
-    await sleep(TTL_MS + 500)
-    assert.deepEqual(await newTargetDirs(before), [], 'the unused prepared target outlived its TTL')
+    const deadlineB = performance.now() + TTL_MS
+    const dirsB = await newTargetDirs(before)
+    assert.equal(dirsB.length, 1)
+    await sleep(600)
+    const tokenC = await prepareToken(port, 1)
+    assert.equal((await newTargetDirs(before)).length, 2)
+    await sleep(deadlineB + 200 - performance.now())
+    const left = await newTargetDirs(before)
+    assert.equal(left.length, 1, 'the unused prepared target outlived its TTL')
+    assert.ok(!left.includes(dirsB[0]), 'the expiry destroyed the wrong target')
+    const runC = await runDelta(port, 2, 'precopy', tokenC)
+    const rowC = (await runC.json()) as { error?: string }
+    assert.equal(runC.status, 200, rowC.error)
+    assert.deepEqual(await newTargetDirs(before), [])
   } finally {
     await runner.stop()
   }
 })
 
-test('a broken /prepare and a /run with a bad or missing token leave no target and no prepare row', async () => {
+test('bad prepare and token', async () => {
   const port = 8816
   const before = await localTargetDirs()
   const runner = await startRunner(port)
@@ -255,6 +289,74 @@ test('a broken /prepare and a /run with a bad or missing token leave no target a
     assert.equal((await newTargetDirs(before)).length, 1, 'a refused /run destroyed the prepared target')
     await sleep(TTL_MS + 500)
     assert.deepEqual(await newTargetDirs(before), [])
+  } finally {
+    await runner.stop()
+  }
+})
+
+test('run row', async () => {
+  const port = 8817
+  const runner = await startRunner(port)
+  try {
+    const stopAt = Date.now()
+    const zip = await buildFakeExport({ priorCounter: 5, logIntervalMs: LOG_INTERVAL_MS, lastSourceTickAt: stopAt - 30 })
+    const response = await fetch(`http://localhost:${port}/run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/zip',
+        [HEADER.exportMs]: '50',
+        [HEADER.stage]: 'smoke',
+        [HEADER.strategy]: 'full',
+        [HEADER.runIndex]: '1',
+        [HEADER.stopAt]: new Date(stopAt).toISOString(),
+        [HEADER.lastSourceTickAt]: new Date(stopAt - 30).toISOString(),
+        [HEADER.killToExportMs]: '1',
+        [HEADER.clientNow]: new Date().toISOString(),
+      },
+      body: zip,
+    })
+    const row = (await response.json()) as Record<string, unknown>
+    assert.equal(response.status, 200, String(row.error))
+    assert.equal(row.error, '')
+    assert.equal(row.sanity_warnings, '')
+    assert.equal(row.counter_expected, 5)
+    assert.equal(row.counter_actual, 5)
+    assert.equal(row.log_interval_ms, LOG_INTERVAL_MS)
+    assert.equal(row.state_loss_ticks, 0)
+    assert.equal(row.state_restored, true)
+    assert.equal(row.resume_verified, true)
+    assert.equal(row.host_stall_ms, 0)
+    assert.ok(Number(row.ingest_ms) > 0, `ingest_ms ${row.ingest_ms}`)
+    assert.ok(
+      Number(row.adapter_overhead_ms) > 0 && Number(row.adapter_overhead_ms) < Number(row.total_wall_ms),
+      `adapter_overhead_ms ${row.adapter_overhead_ms}`
+    )
+    assert.equal(row.payload_bytes, zip.length)
+
+    const n = (column: string) => Number(row[column])
+    const at = (column: string) => Date.parse(String(row[column]))
+    assert.equal(n('interruption_ms'), at('first_tick_at') - stopAt)
+    assert.equal(n('interruption_gap_ms'), n('interruption_ms') + 30)
+    assert.equal(
+      n('restore_dispatch_ms'),
+      Number(BigInt(String(row.restore_mark_ns)) / 1000000n) - at('restore_issued_at')
+    )
+    const pollRest = at('detect_at') - at('first_tick_at')
+    assert.ok(Math.abs(n('alive_to_tick_ms') - (n('alive_ms') - pollRest)) <= 1, `alive_to_tick_ms ${row.alive_to_tick_ms}`)
+    assert.ok(
+      Math.abs(n('total_wall_to_tick_ms') - (n('total_wall_ms') - pollRest)) <= 1,
+      `total_wall_to_tick_ms ${row.total_wall_to_tick_ms}`
+    )
+    assert.ok(
+      Math.abs(n('total_sum_ms') - n('export_ms') - n('total_wall_ms')) <= 2,
+      `total_sum_ms ${row.total_sum_ms}, total_wall_ms ${row.total_wall_ms}`
+    )
+
+    const { rows } = parseCsv(await readFile(path.join(runner.outDir, 'results.csv'), 'utf8'))
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].run_id, row.run_id)
+    assert.equal(rows[0].counter_expected, '5')
+    assert.equal(rows[0].interruption_ms, String(row.interruption_ms))
   } finally {
     await runner.stop()
   }

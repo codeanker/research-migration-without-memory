@@ -74,7 +74,14 @@ vite.config.ts.timestamp-*
 !/data/live/env.json
 !/data/live/sessions/
 !/data/live/sessions/*.json
+!/data/refactoring-check/
 /data/results-*.csv
 
 /data/smoke-results.csv
 /data/smoke-env.json
+
+.venv/
+__pycache__/
+__marimo__/
+
+.DS_Store

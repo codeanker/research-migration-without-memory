@@ -95,24 +95,22 @@ setInterval(writeState, logIntervalMs)
 `
 
 interface ProcessSnapshotInput {
-  counter: number | null
-  cwd?: string
-  command?: string
-  logIntervalMs?: number | null
-  stateLossTicks?: number | null
+  counter: number
+  command: string
+  logIntervalMs: number
+  stateLossTicks: number | null
 }
 
 export function buildProcessSnapshot({
   counter,
-  cwd = '/work',
-  command = 'node heartbeat.js',
-  logIntervalMs = null,
-  stateLossTicks = null,
+  command,
+  logIntervalMs,
+  stateLossTicks,
 }: ProcessSnapshotInput): string {
   return JSON.stringify(
     {
       command,
-      cwd,
+      cwd: '/work',
       counter,
       logIntervalMs,
       stateLossTicks,

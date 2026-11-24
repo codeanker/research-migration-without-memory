@@ -1,0 +1,9 @@
+y transfer install targetstart harness total unacc n label
+1 1262.9 0.0 1688.7 7.5 2959.2 0.2 30 {full / small, 1.8 kB}
+2 1417.6 0.0 1636.7 7.2 3061.7 0.2 30 {manifest / small, 1.8 kB}
+3.4 2168.9 0.0 1686.9 5.6 3861.5 0.1 30 {full / light, 0.91 MB}
+4.4 1421.6 3005.3 1301.6 99.2 5828.0 0.2 30 {manifest / light, 0.91 MB}
+5.8 3645.9 0.0 1693.0 8.8 5347.8 0.1 30 {full / medium, 4.62 MB}
+6.8 1333.5 4876.5 1232.1 6.4 7448.6 0.2 30 {manifest / medium, 4.62 MB}
+8.2 7026.4 0.0 1621.7 15.6 8663.8 0.2 30 {full / large, 13.93 MB}
+9.2 1319.5 4466.3 1222.5 6.6 7015.2 0.2 30 {manifest / large, 13.93 MB}

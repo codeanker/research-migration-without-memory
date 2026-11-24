@@ -17,5 +17,5 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true
   },
-  "include": ["runner", "targets", "shared", "test", "paper/figures"]
+  "include": ["runner", "targets", "shared", "test"]
 }

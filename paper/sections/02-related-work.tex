@@ -1,0 +1,55 @@
+\section{Related Work}
+\label{sec:related-work}
+
+Typically, migrations are categorized into cold and live migration \cite{he2023taxonomy}.
+In this work, \textbf{cold migration} refers to a migration which consists of one phase, the \textbf{stop-and-copy} phase. During this phase, the \ac{VM} is stopped on the source and resumes on the target only after all of its pages have been copied \cite{clark2005live}.
+Cold migration is rather simple, but the more memory the \ac{VM} has, the longer the downtime and the total migration time \cite{clark2005live,he2023taxonomy}. During the \textbf{downtime}, clients are unable to reach the service. The \textbf{total migration time} describes the time span during which source and target have to be kept consistent, which can affect reliability \cite{clark2005live}.
+
+Additionally, live migration may contain a \textbf{push} and a \textbf{pull} phase. In the push phase, pages are copied to the target host while the source \ac{VM} continues to run. A page that changes during this copy is copied once more. In contrast to the push phase, during the pull phase the \ac{VM} already runs on the target and fetches each missing page from the source as soon as it accesses it \cite{clark2005live,he2023taxonomy}.
+Furthermore, He and Buyya split live migration into three types, pre-copy, post-copy and hybrid migration, a combination that begins as pre-copy and changes to post-copy later on \cite{he2023taxonomy}.
+\textbf{Pre-copy} migration sends the memory in a limited number of push rounds and usually stops the \ac{VM} only for a short final stop-and-copy phase. Thereby, it balances the downtime against the total migration time \cite{clark2005live}.
+\textbf{Post-copy} first moves the \ac{CPU} state and resumes the \ac{VM} on the target host. Afterwards, the remaining memory follows from the source \cite{hines2009post,he2023taxonomy}.
+
+The strategies above are described for memory pages \cite{he2023taxonomy}. As the WebContainers \ac{API} documents no memory export (Section~\ref{sec:introduction}), all of them have to be excluded at the memory level.
+
+He and Buyya split the transfer of memory as well as the transfer of storage into these phases \cite{he2023taxonomy}. In the same way, the phases are applied at the filesystem level.
+The push phase copies the working directory to the target while the source keeps running. In addition, after a migration has been requested, Clark et al. first reserve the resources on the target while the source keeps running \cite{clark2005live}.
+Therefore, a push phase requires a source that keeps running after the handover has been requested.
+In the assumed scenario, the handover is triggered because the source runs out of a resource, for example memory. Handovers that are triggered because the sandbox can't provide something, for example a system call (Section~\ref{sec:introduction}), are not considered. This means a push phase is available only if the handover is anticipated before the resource is exhausted (RQ-1, Section~\ref{sec:research-questions}).
+For this anticipated case, the push phase consists of a single round. Clark et al. move the pages that are rarely written in the push phase and leave the frequently written ones, the writable working set, to the final stop-and-copy phase \cite{clark2005live}.
+If the handover is not anticipated, the session has to stop as soon as the handover is triggered. The working directory is then transferred after the stop. Without a push phase, this is cold migration (RQ-2).
+
+At the filesystem level, a pull phase would restart the session on the target and fetch each missing file from the source as soon as it is accessed. Hence, post-copy and hybrid migration have a counterpart as well.
+However, a pull phase leaves a remaining dependency on the source \cite{milojivcic2000process}. With pre-copy, the dependency on the source ends when the target starts. With post-copy and hybrid migration, it lasts until the pull phase ends \cite{hines2009post}. Hence, both require the browser tab to stay open until the last file has been fetched, which the scenario does not guarantee.
+
+At the filesystem level, every strategy has a counterpart (Table~\ref{tab:rq1}). Pre-copy is measured for an anticipated handover and cold migration for a handover without anticipation.
+
+The strategies full copy and manifest-based transfer are compared. The full copy transfers the whole working directory. Manifest-based transfer sends the working directory without its installed dependencies, which the target installs again from the package manifest and the lockfile. Without anticipation, both consist only of a stop-and-copy phase. With anticipation, both are preceded by a push round.
+
+Milojicic et al. distinguish four levels at which migration can be implemented, the operating system kernel, user space, the system environment and the application itself \cite{milojivcic2000process}.
+In the presented handover, the application writes its own state to a file in the working directory and is restarted from this file on the target. Therefore, the handover is placed on the last of these four levels, the \textbf{application level}.
+
+Several works migrate \ac{WASM} applications between hosts or runtimes.
+GRANNY splits an application into granules, which each execute one thread as a \ac{WASM} module, and migrates the granules of applications with several processes through snapshots. A granule is only migrated at barrier control points, which are injected while the application is cross-compiled to \ac{WASM} \cite{segarra2025granny}. As a result, the authors themselves call this migration a ``co-operative process'' \cite{segarra2025granny}.
+Jeong et al. migrate web workers running \ac{WASM} from a Chromium client to Node.js servers and transfer the linear memory along with them. They modify both the browser and Node.js to capture the runtime state \cite{jeong2019seamless}.
+Tinto et al. do not modify the runtime but instrument the bytecode of selected functions in the module, so that the module itself saves and restores its execution state \cite{tinto2025live}.
+Nakata and Matsubara do not modify existing runtimes either, as their runtime Chiwawa is itself compiled to \ac{WASM} and executes the application on top of the host runtime \cite{nakata2025self}.
+
+All of these approaches require control over the runtime, the compilation path or the module before computation begins. Therefore, none of them addresses the case of this work, in which this control isn't available. In the assumed scenario, the computation has already begun, because the sandbox is running when the handover is triggered.
+
+\begin{table}[t]
+\caption{Established migration strategies, their counterparts in the presented setup, and the measured manifest-based transfer.}
+\label{tab:rq1}
+\centering
+\begin{tabular}{@{}p{0.22\columnwidth}p{0.58\columnwidth}p{0.10\columnwidth}@{}}
+\hline
+\textbf{Strategy} & \textbf{Counterpart} & \textbf{Ref.} \\
+\hline
+Pre-copy & one push round before the stop, requires an anticipated handover, puts extra work on the source, measured & \cite{clark2005live} \\
+Post-copy & a pull phase of files after the restart, requires the browser tab to stay open until it ends, not measured & \cite{hines2009post} \\
+Cold migration & the full copy after the stop, requires the source until the upload ends, the interruption grows with the project size, measured, baseline & \cite{clark2005live,he2023taxonomy} \\
+Hybrid & a push round, then a pull phase, requires an anticipated handover and an open browser tab, not measured & \cite{he2023taxonomy} \\
+Manifest-based & the target installs the dependencies again, depends on its registry link, measured, not in the taxonomy \cite{he2023taxonomy} & - \\
+\hline
+\end{tabular}
+\end{table}

@@ -9,7 +9,7 @@ import {
   zipListingTotals,
 } from '../shared/push.ts'
 
-test('precopy and manifest-push are push strategies, only manifest-push installs on the target', () => {
+test('push strategies', () => {
   assert.equal(isPushStrategy('precopy'), true)
   assert.equal(isPushStrategy('manifest-push'), true)
   assert.equal(isPushStrategy('full'), false)
@@ -18,7 +18,7 @@ test('precopy and manifest-push are push strategies, only manifest-push installs
   assert.equal(pushInstalls('precopy'), false)
 })
 
-test('the delta always carries state.json and process-snapshot.json, without duplicates', () => {
+test('delta files', () => {
   assert.deepEqual(deltaIncludes([]), ['state.json', 'process-snapshot.json'])
   assert.deepEqual(deltaIncludes(new Set(['heartbeat.log', 'state.json'])), [
     'heartbeat.log',
@@ -27,7 +27,7 @@ test('the delta always carries state.json and process-snapshot.json, without dup
   ])
 })
 
-test('the zip listing counts files and their uncompressed bytes, not directories', () => {
+test('zip listing totals', () => {
   const listing = [
     'Archive:  delta.zip',
     '  Length      Date    Time    Name',
@@ -43,11 +43,11 @@ test('the zip listing counts files and their uncompressed bytes, not directories
   assert.deepEqual(zipListingTotals(listing), { files: 3, bytes: 4730 })
 })
 
-test('a listing without the table is an error, not zero files', () => {
+test('zip listing without table', () => {
   assert.throws(() => zipListingTotals('Archive:  broken.zip\n'), /unexpected unzip -l output/)
 })
 
-test('the guard names every path under node_modules and leaves the others alone', () => {
+test('node_modules guard', () => {
   const dirty = new Set([
     'heartbeat.log',
     'node_modules/a/index.js',
@@ -61,7 +61,7 @@ test('the guard names every path under node_modules and leaves the others alone'
   assert.deepEqual(dirtyNodeModules(['heartbeat.log', 'state.json']), [])
 })
 
-test('expected ticks count whole 100 ms ticks in the window', () => {
+test('expected ticks', () => {
   assert.equal(expectedTicks(0), 0)
   assert.equal(expectedTicks(99.9), 0)
   assert.equal(expectedTicks(100), 1)

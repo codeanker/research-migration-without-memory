@@ -6,7 +6,7 @@ import { writeFile, mkdir, readdir, rm } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { REPO_ROOT } from './child.ts'
 import { appendCsvRow, ensureCsvHeader, makeEmptyRow } from './csv.ts'
 import type { Row } from './csv.ts'
 import {
@@ -25,29 +25,27 @@ import {
   tickCorrectedDurations,
 } from './timing.ts'
 import type { TimingContext } from './timing.ts'
-import { epochMsOf, errorMessage, num, numberOrBlank } from './util.ts'
+import { resolveDataPaths } from './plan.ts'
+import { epochMsOf, errorMessage, grew, num, numberOrBlank } from './util.ts'
 import { loadAdapter } from '../targets/registry.ts'
-import { AliveTimeoutError, TargetAdapter } from '../targets/interface.ts'
-import type { CreateOptions, TargetHandle, WaitAliveResult } from '../targets/interface.ts'
+import { AliveTimeoutError } from '../targets/interface.ts'
+import type {
+  ClockOffsetResult,
+  CreateOptions,
+  CreateResult,
+  WaitAliveResult,
+} from '../targets/interface.ts'
+import type { ShellHandle } from '../targets/shell-adapter.ts'
 import { sleep, timed, withTimeout } from '../shared/timing.ts'
 import { CORS_ALLOW_HEADERS, HEADER, headerValue } from '../shared/protocol.ts'
-import { assertStrategy, isKnownStage, isMeasurementStage, KNOWN_STAGES } from '../shared/stages.ts'
+import { assertKnownStage, assertStrategy, isMeasurementStage } from '../shared/stages.ts'
 import type { ProcessSnapshot, ProcessState } from '../shared/work-state.ts'
 import { stageNeedsInstall } from '../browser/src/payload.ts'
 import { isPushStrategy, pushInstalls, zipListingTotals } from '../shared/push.ts'
 
 const execFileAsync = promisify(execFile)
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.join(__dirname, '..', 'data')
-const CSV_PATH = process.env.CSV_PATH
-  ? path.resolve(process.env.CSV_PATH)
-  : path.join(DATA_DIR, 'results.csv')
-const ENV_PATH = process.env.ENV_PATH
-  ? path.resolve(process.env.ENV_PATH)
-  : path.join(DATA_DIR, 'env.json')
+const { dataDir: DATA_DIR, csvPath: CSV_PATH, envPath: ENV_PATH } = resolveDataPaths({}, REPO_ROOT)
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8787
 const TARGET_NAME = process.env.TARGET || 'e2b'
 const PREPARE_TTL_MS = process.env.PREPARE_TTL_MS ? Number(process.env.PREPARE_TTL_MS) : 60000
@@ -64,7 +62,7 @@ const STALL_POLL_MS = 1000
 const STALL_THRESHOLD_MS = 5000
 
 const adapter = await loadAdapter(TARGET_NAME)
-const adapterName = (adapter.constructor as typeof TargetAdapter).NAME
+const adapterName = TARGET_NAME
 
 await mkdir(DATA_DIR, { recursive: true })
 await mkdir(path.dirname(CSV_PATH), { recursive: true })
@@ -75,10 +73,10 @@ await writeEnvInfo(ENV_PATH, { adapterName })
 let runCounter = 0
 let targetMetaRecorded = false
 let activeRun: Promise<void> | null = null
-const liveHandles = new Set<TargetHandle>()
+const liveHandles = new Set<ShellHandle>()
 
 interface PreparedTarget {
-  handle: TargetHandle
+  handle: ShellHandle
   run_id: string
   stage: string
   strategy: string
@@ -101,8 +99,7 @@ const stallWatchdog = setInterval(() => {
   if (jumpMs > STALL_THRESHOLD_MS) {
     stallSinceLastRunMs += jumpMs
     console.warn(
-      `[runner] wall clock jumped ${(jumpMs / 1000).toFixed(1)}s - the host was suspended. ` +
-        'The run this falls into is marked with host_stall_ms.'
+      `[runner] wall clock jumped ${(jumpMs / 1000).toFixed(1)}s - the host was suspended`
     )
   }
 }, STALL_POLL_MS)
@@ -113,6 +110,8 @@ function takeHostStallMs(): number {
   stallSinceLastRunMs = 0
   return stall
 }
+
+const POST_ROUTES = new Map([['/run', handleRun], ['/prepare', handlePrepare]])
 
 const server = createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -129,24 +128,17 @@ const server = createServer(async (req, res) => {
       .end(JSON.stringify({ now: Date.now() }))
     return
   }
-  const handler =
-    req.method !== 'POST' ? null : req.url === '/run' ? handleRun : req.url === '/prepare' ? handlePrepare : null
+  const handler = req.method === 'POST' ? POST_ROUTES.get(req.url ?? '') : undefined
   if (handler) {
     if (activeRun) {
-      res
-        .writeHead(409, { 'content-type': 'application/json' })
-        .end(JSON.stringify({ error: 'a run is already in progress on this runner' }))
+      sendJson(res, 409, { error: 'a run is already in progress on this runner' })
       return
     }
     activeRun = handler(req, res)
       .catch((err: unknown) => {
         console.error('[runner] writing the result failed:', err)
         if (!res.headersSent) {
-          res
-            .writeHead(500, { 'content-type': 'application/json' })
-            .end(
-              JSON.stringify({ error: `runner could not record the run: ${errorMessage(err)}` })
-            )
+          sendJson(res, 500, { error: `runner could not record the run: ${errorMessage(err)}` })
         }
       })
       .finally(() => {
@@ -166,18 +158,11 @@ server.listen(PORT, () => {
 })
 
 function assertRunnable(stage: string, strategy: string): void {
-  if (!isKnownStage(stage)) {
-    throw new Error(
-      `unknown stage "${stage}" (known: ${KNOWN_STAGES.join(', ')}) - a typo here would label ` +
-        'a whole cell wrongly, so the run is refused instead of measured'
-    )
-  }
+  assertKnownStage(stage)
   if (isMeasurementStage(stage) || strategy) assertStrategy(strategy)
 }
 
-async function createTarget(
-  opts?: CreateOptions
-): Promise<Awaited<ReturnType<TargetAdapter['create']>>> {
+async function createTarget(opts?: CreateOptions): Promise<CreateResult<ShellHandle>> {
   const created = await adapter.create(opts)
   liveHandles.add(created.handle)
   if (!targetMetaRecorded && created.meta) {
@@ -189,6 +174,16 @@ async function createTarget(
   return created
 }
 
+async function destroyTarget(handle: ShellHandle | null, label: string): Promise<void> {
+  if (!handle) return
+  liveHandles.delete(handle)
+  try {
+    await adapter.destroy(handle)
+  } catch (err: unknown) {
+    console.error(`[runner] destroy() failed for ${label}:`, err)
+  }
+}
+
 function needsInstall(stage: string): boolean {
   return isMeasurementStage(stage) && stageNeedsInstall(stage)
 }
@@ -198,7 +193,7 @@ async function handlePrepare(req: IncomingMessage, res: ServerResponse): Promise
   const strategy = headerValue(req.headers, HEADER.strategy) || ''
   const runIndex = headerValue(req.headers, HEADER.runIndex) || ''
   const run_id = [stage, strategy, runIndex].filter(Boolean).join('-')
-  let handle: TargetHandle | null = null
+  let handle: ShellHandle | null = null
   try {
     assertRunnable(stage, strategy)
     if (!isPushStrategy(strategy)) {
@@ -227,20 +222,11 @@ async function handlePrepare(req: IncomingMessage, res: ServerResponse): Promise
     preparedTargets.set(token, prepared)
     prepared.expiry = setTimeout(() => void expirePrepared(token), PREPARE_TTL_MS)
     const { handle: _handle, run_id: _runId, expiry: _expiry, ...values } = prepared
-    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ token, ...values }))
+    sendJson(res, 200, { token, ...values })
   } catch (err: unknown) {
     console.error(`[runner] Prepare ${run_id} failed:`, err)
-    if (handle) {
-      liveHandles.delete(handle)
-      try {
-        await adapter.destroy(handle)
-      } catch (destroyErr: unknown) {
-        console.error(`[runner] destroy() failed for prepare ${run_id}:`, destroyErr)
-      }
-    }
-    res
-      .writeHead(500, { 'content-type': 'application/json' })
-      .end(JSON.stringify({ error: `prepare failed: ${errorMessage(err)}` }))
+    await destroyTarget(handle, `prepare ${run_id}`)
+    sendJson(res, 500, { error: `prepare failed: ${errorMessage(err)}` })
   }
 }
 
@@ -285,44 +271,10 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
   const t_wall_start = performance.now()
   const headersAt = Date.now()
   runCounter += 1
+  const row = runRowFromHeaders(req, headersAt)
+  const { run_id, stage, strategy } = row
 
-  const exportMsHeader = headerValue(req.headers, HEADER.exportMs)
-  const stage = headerValue(req.headers, HEADER.stage) || 'unknown'
-  const strategy = headerValue(req.headers, HEADER.strategy) || ''
-  const runIndex = headerValue(req.headers, HEADER.runIndex) || String(runCounter)
-  const run_id = [stage, strategy, runIndex].filter(Boolean).join('-')
-
-  const stop_at = headerValue(req.headers, HEADER.stopAt) || ''
-  const last_source_tick_at = headerValue(req.headers, HEADER.lastSourceTickAt) || ''
-  const stopAtMs = epochMsOf(stop_at)
-  const lastSourceTickMs = epochMsOf(last_source_tick_at)
-  const clientNowMs = epochMsOf(headerValue(req.headers, HEADER.clientNow))
-
-  const row = makeEmptyRow()
-  Object.assign(row, {
-    run_id,
-    run_at: new Date().toISOString(),
-    session_label: headerValue(req.headers, HEADER.sessionLabel) || '',
-    target: adapterName,
-    stage,
-    strategy,
-    first_run: headerValue(req.headers, HEADER.firstRun) === 'true',
-    first_run_of_cell: headerValue(req.headers, HEADER.firstRunOfCell) === 'true',
-    expect_failure: false,
-    position_in_cycle: numberOrBlank(headerValue(req.headers, HEADER.positionInCycle)),
-    cycle: numberOrBlank(headerValue(req.headers, HEADER.cycle)),
-    kill_to_export_ms: numberOrBlank(headerValue(req.headers, HEADER.killToExportMs)),
-    heartbeat_resumed: false,
-    state_restored: false,
-    stop_offset_target_ms: numberOrBlank(headerValue(req.headers, HEADER.stopOffsetTargetMs)),
-    stop_offset_actual_ms: numberOrBlank(headerValue(req.headers, HEADER.stopOffsetActualMs)),
-    stop_at,
-    last_source_tick_at,
-    client_clock_skew_ms: numberOrBlank(headerValue(req.headers, HEADER.clientClockSkewMs)),
-    client_header_delay_ms: clientNowMs === null ? '' : headersAt - clientNowMs,
-  } satisfies Partial<Row>)
-
-  let handle: TargetHandle | null = null
+  let handle: ShellHandle | null = null
   let tempZipPath: string | null = null
   let baselineLines = 0
   let restoreIssuedAt: number | null = null
@@ -352,6 +304,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
 
   try {
     assertRunnable(stage, strategy)
+    const exportMsHeader = headerValue(req.headers, HEADER.exportMs)
     if (!exportMsHeader) throw new Error(`Header ${HEADER.exportMs} missing`)
     const export_ms = Number(exportMsHeader)
     if (!Number.isFinite(export_ms)) throw new Error(`${HEADER.exportMs} invalid: ${exportMsHeader}`)
@@ -366,13 +319,13 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
     const snapshot = await ingest(() =>
       extractJsonFromZip<ProcessSnapshot>(uploadPath, 'work/process-snapshot.json')
     )
-    row.counter_expected = typeof snapshot?.counter === 'number' ? snapshot.counter : ''
-    row.log_interval_ms = typeof snapshot?.logIntervalMs === 'number' ? snapshot.logIntervalMs : ''
+    row.counter_expected = typeof snapshot.counter === 'number' ? snapshot.counter : ''
+    row.log_interval_ms = typeof snapshot.logIntervalMs === 'number' ? snapshot.logIntervalMs : ''
     row.state_loss_ticks =
-      typeof snapshot?.stateLossTicks === 'number' ? snapshot.stateLossTicks : ''
+      typeof snapshot.stateLossTicks === 'number' ? snapshot.stateLossTicks : ''
 
     const prepared = takePrepared(headerValue(req.headers, HEADER.prepareToken), stage, strategy)
-    let targetHandle: TargetHandle
+    let targetHandle: ShellHandle
     if (prepared) {
       targetHandle = prepared.handle
       handle = targetHandle
@@ -414,7 +367,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
 
     try {
       aliveResult = await callAdapter('alive_ms', () =>
-        adapter.waitAlive(targetHandle, { baselineLines })
+        adapter.waitAlive(targetHandle, baselineLines)
       )
       row.alive_ms = aliveResult.alive_ms
       row.first_tick_at = aliveResult.first_tick_at
@@ -471,49 +424,13 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
       console.error('[runner] could not update env.json with clock info:', err)
     )
 
-    const interruption = computeInterruption({
-      stopAtMs,
-      lastSourceTickMs,
-      firstTickAt: aliveResult.first_tick_at,
-      offsetMs: clock.offset_ms,
-      restoreIssuedAt,
-      restoreMarkNs: aliveResult.restore_mark_ns,
-    })
-    row.interruption_ms = interruption.interruption_ms
-    row.interruption_gap_ms = interruption.interruption_gap_ms
-    row.interruption_split_ms = interruption.interruption_split_ms
-    row.restore_dispatch_ms = interruption.restore_dispatch_ms
-
-    const pollRest = pollRestMs({
-      firstTickAt: aliveResult.first_tick_at,
-      offsetMs: clock.offset_ms,
-      detectAt: aliveResult.detect_at,
-    })
-    const corrected = tickCorrectedDurations({
-      aliveMs: row.alive_ms,
-      totalWallMs: row.total_wall_ms,
-      pollRest,
-    })
-    row.alive_to_tick_ms = corrected.alive_to_tick_ms
-    row.total_wall_to_tick_ms = corrected.total_wall_to_tick_ms
-
-    row.total_sum_ms =
-      num(row.export_ms) +
-      num(row.ingest_ms) +
-      num(row.upload_ms) +
-      num(row.boot_ms) +
-      num(row.unpack_ms) +
-      num(row.install_ms) +
-      num(row.restart_ms) +
-      num(row.alive_ms) +
-      num(row.adapter_overhead_ms)
-
+    recordDerivedTimings(row, aliveResult, clock, restoreIssuedAt)
     recordSanityWarnings(row, { detectAt: aliveResult.detect_at, restoreIssuedAt })
 
     await verifyResume({ handle: targetHandle, row, baselineLines })
 
     await finalizeRun({ handle: targetHandle, tempZipPath: uploadPath, row })
-    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(row))
+    sendJson(res, 200, row)
     return
   } catch (err: unknown) {
     if (!row.total_wall_ms) row.total_wall_ms = performance.now() - t_wall_start
@@ -522,17 +439,89 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
     row.error = appendError(row.error, errorMessage(err))
     console.error(`[runner] Run ${run_id} failed:`, err)
     await finalizeRun({ handle, tempZipPath, row })
-    res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify(row))
+    sendJson(res, 500, row)
   }
 }
 
-function recordSanityWarnings(row: Row, context: TimingContext): string[] {
+function runRowFromHeaders(req: IncomingMessage, headersAt: number): Row {
+  const stage = headerValue(req.headers, HEADER.stage) || 'unknown'
+  const strategy = headerValue(req.headers, HEADER.strategy) || ''
+  const runIndex = headerValue(req.headers, HEADER.runIndex) || String(runCounter)
+  const clientNowMs = epochMsOf(headerValue(req.headers, HEADER.clientNow))
+  return Object.assign(makeEmptyRow(), {
+    run_id: [stage, strategy, runIndex].filter(Boolean).join('-'),
+    run_at: new Date().toISOString(),
+    session_label: headerValue(req.headers, HEADER.sessionLabel) || '',
+    target: adapterName,
+    stage,
+    strategy,
+    first_run: headerValue(req.headers, HEADER.firstRun) === 'true',
+    first_run_of_cell: headerValue(req.headers, HEADER.firstRunOfCell) === 'true',
+    expect_failure: false,
+    position_in_cycle: numberOrBlank(headerValue(req.headers, HEADER.positionInCycle)),
+    cycle: numberOrBlank(headerValue(req.headers, HEADER.cycle)),
+    kill_to_export_ms: numberOrBlank(headerValue(req.headers, HEADER.killToExportMs)),
+    heartbeat_resumed: false,
+    state_restored: false,
+    stop_offset_target_ms: numberOrBlank(headerValue(req.headers, HEADER.stopOffsetTargetMs)),
+    stop_offset_actual_ms: numberOrBlank(headerValue(req.headers, HEADER.stopOffsetActualMs)),
+    stop_at: headerValue(req.headers, HEADER.stopAt) || '',
+    last_source_tick_at: headerValue(req.headers, HEADER.lastSourceTickAt) || '',
+    client_clock_skew_ms: numberOrBlank(headerValue(req.headers, HEADER.clientClockSkewMs)),
+    client_header_delay_ms: clientNowMs === null ? '' : headersAt - clientNowMs,
+  } satisfies Partial<Row>)
+}
+
+function recordDerivedTimings(
+  row: Row,
+  alive: WaitAliveResult,
+  clock: ClockOffsetResult,
+  restoreIssuedAt: number
+): void {
+  const interruption = computeInterruption({
+    stopAtMs: epochMsOf(row.stop_at),
+    lastSourceTickMs: epochMsOf(row.last_source_tick_at),
+    firstTickAt: alive.first_tick_at,
+    offsetMs: clock.offset_ms,
+    restoreIssuedAt,
+    restoreMarkNs: alive.restore_mark_ns,
+  })
+  row.interruption_ms = interruption.interruption_ms
+  row.interruption_gap_ms = interruption.interruption_gap_ms
+  row.interruption_split_ms = interruption.interruption_split_ms
+  row.restore_dispatch_ms = interruption.restore_dispatch_ms
+
+  const pollRest = pollRestMs({
+    firstTickAt: alive.first_tick_at,
+    offsetMs: clock.offset_ms,
+    detectAt: alive.detect_at,
+  })
+  const corrected = tickCorrectedDurations({
+    aliveMs: row.alive_ms,
+    totalWallMs: row.total_wall_ms,
+    pollRest,
+  })
+  row.alive_to_tick_ms = corrected.alive_to_tick_ms
+  row.total_wall_to_tick_ms = corrected.total_wall_to_tick_ms
+
+  row.total_sum_ms =
+    num(row.export_ms) +
+    num(row.ingest_ms) +
+    num(row.upload_ms) +
+    num(row.boot_ms) +
+    num(row.unpack_ms) +
+    num(row.install_ms) +
+    num(row.restart_ms) +
+    num(row.alive_ms) +
+    num(row.adapter_overhead_ms)
+}
+
+function recordSanityWarnings(row: Row, context: TimingContext): void {
   const warnings = checkTimingSanity(row, context)
   for (const message of warnings) {
     console.warn(`[runner] Timing sanity check for ${row.run_id}: ${message}`)
   }
   row.sanity_warnings = warnings.join('; ')
-  return warnings
 }
 
 async function verifyResume({
@@ -540,7 +529,7 @@ async function verifyResume({
   row,
   baselineLines,
 }: {
-  handle: TargetHandle
+  handle: ShellHandle
   row: Row
   baselineLines: number
 }): Promise<void> {
@@ -558,14 +547,8 @@ async function verifyResume({
       typeof progress.state?.counter === 'number' ? progress.state.counter : ''
 
     const ticksKeptComing =
-      typeof row.resume_tick_counter === 'number' &&
-      typeof row.first_tick_counter === 'number' &&
-      row.resume_tick_counter > row.first_tick_counter &&
-      progress.lines > baselineLines + 1
-    const stateKeptGrowing =
-      typeof row.resume_state_counter === 'number' &&
-      typeof row.counter_expected === 'number' &&
-      row.resume_state_counter > row.counter_expected
+      grew(row.resume_tick_counter, row.first_tick_counter) && progress.lines > baselineLines + 1
+    const stateKeptGrowing = grew(row.resume_state_counter, row.counter_expected)
 
     row.resume_verified = ticksKeptComing && stateKeptGrowing
     if (!row.resume_verified) {
@@ -596,25 +579,17 @@ async function finalizeRun({
   tempZipPath,
   row,
 }: {
-  handle: TargetHandle | null
+  handle: ShellHandle | null
   tempZipPath: string | null
   row: Row
 }): Promise<void> {
-  if (handle) {
-    liveHandles.delete(handle)
-    try {
-      await adapter.destroy(handle)
-    } catch (err: unknown) {
-      console.error(`[runner] destroy() failed for ${row.run_id}:`, err)
-    }
-  }
+  await destroyTarget(handle, row.run_id)
   if (tempZipPath) await rm(tempZipPath, { force: true })
   const hostStallMs = takeHostStallMs()
   row.host_stall_ms = hostStallMs
   if (hostStallMs > 0) {
     console.warn(
-      `[runner] ${row.run_id} overlapped ${(hostStallMs / 1000).toFixed(1)}s of suspended host. ` +
-        'The run is kept and marked, not discarded.'
+      `[runner] ${row.run_id} overlapped ${(hostStallMs / 1000).toFixed(1)}s of suspended host`
     )
   }
   await appendCsvRow(CSV_PATH, row)
@@ -630,6 +605,10 @@ async function removeStaleUploads(): Promise<void> {
   } catch (err: unknown) {
     console.warn(`[runner] could not clean up leftover uploads: ${errorMessage(err)}`)
   }
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
 }
 
 function readBody(req: IncomingMessage): Promise<Buffer> {

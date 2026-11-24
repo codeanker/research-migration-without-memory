@@ -9,17 +9,17 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "ms-toolsai.jupyter",
-        "ms-toolsai.datawrangler",
+        "marimo-team.vscode-marimo",
+        "astral-sh.ty",
         "eamodio.gitlens",
-        "donjayamanne.githistory",
-        "ms-python.python",
-        "ms-python.pylint",
         "repreng.csv",
         "anthropic.claude-code",
         "James-Yu.latex-workshop",
         "aaron-bond.better-comments"
-      ]
+      ],
+      "settings": {
+        "marimo.pythonPath": "/workspaces/microvm-research-trial/.venv/bin/python"
+      }
     }
   },
 

@@ -1,11 +1,12 @@
 import type { HeartbeatTick } from '../shared/heartbeat.ts'
-import type { ProcessSnapshot, ProcessState } from '../shared/work-state.ts'
+import type { ProcessState } from '../shared/work-state.ts'
 
 export type TargetHandle = object
 
 export interface Tooling {
   unzip: string
   node: string
+  npm: string
 }
 
 export interface TargetMeta {
@@ -41,12 +42,6 @@ export interface RestoreResult {
   restore_issued_at: number
 }
 
-export interface WaitAliveOptions {
-  timeoutMs?: number
-  pollMs?: number
-  baselineLines?: number
-}
-
 export interface WaitAliveResult {
   alive_ms: number
   first_tick_at: string
@@ -67,34 +62,7 @@ export interface ClockOffsetResult {
   samples: number
 }
 
-export interface ClockOffsetOptions {
-  samples?: number
-}
-
-export abstract class TargetAdapter<H extends TargetHandle = TargetHandle> {
-  static NAME = 'unimplemented'
-
-  abstract create(opts?: CreateOptions): Promise<CreateResult<H>>
-
-  abstract writePayload(handle: H, bytes: Buffer): Promise<WritePayloadResult>
-
-  abstract unpack(handle: H): Promise<UnpackResult>
-
-  abstract install(handle: H): Promise<InstallResult>
-
-  abstract restore(handle: H, snapshot: ProcessSnapshot | null): Promise<RestoreResult>
-
-  abstract waitAlive(handle: H, opts?: WaitAliveOptions): Promise<WaitAliveResult>
-
-  abstract readProgress(handle: H): Promise<ProgressResult>
-
-  abstract clockOffset(handle: H, opts?: ClockOffsetOptions): Promise<ClockOffsetResult>
-
-  abstract destroy(handle: H): Promise<void>
-}
-
 export class AliveTimeoutError extends Error {
-  readonly code = 'ALIVE_TIMEOUT'
   readonly alive_ms: number
 
   constructor(message: string, aliveMs: number) {

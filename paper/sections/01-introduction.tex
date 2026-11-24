@@ -1,0 +1,26 @@
+\section{Introduction}
+\label{sec:introduction}
+
+WebContainers run a development environment on the \ac{WASM} runtime inside the browser tab \cite{stackblitz-blog-2021,stackblitz-intro}. Their \ac{API} mounts project files into the filesystem and starts and stops processes \cite{stackblitz-quickstart,stackblitz-2024}. According to StackBlitz, such an environment boots in milliseconds and computes on the client instead of on a server \cite{stackblitz-blog-2021,stackblitz-intro}. However, the sandbox limits what a session is able to do. The problem is that \ac{WASM} code can't call the operating system itself. In terms of system calls, I/O or access to resources, it can only use functions that the host environment of the runtime passes to the module as imports \cite{w3c-wasm-2026}. Furthermore, a session can run out of memory. In the study of Jangda et al., two benchmark programs ran with their test input, but with their larger reference input they needed over \SI{4}{\giga\byte} of memory. This was more than \ac{WASM} allowed at that time \cite{jangda2019not}. As soon as a running session runs out of resources or needs something the sandbox can't provide, it may have to be handed over from the browser tab to a microVM, a lightweight \ac{VM} \cite{agache2020firecracker,xiao2023attacks}, on the server.
+
+An established way to move a running environment is \ac{VM} migration \cite{clark2005live}. However, the WebContainers \ac{API} does not support it. In the browser, \ac{WASM} modules run inside the JavaScript engine, which provides the runtime \cite{zhang2025research}. In WebContainers, an application reaches a session through the public WebContainers \ac{API}, which documents a filesystem export but no export for memory \cite{stackblitz-2024}. Hence, the handover has to work without changing the runtime and without compiling or instrumenting the code of the session. This means that only the files of the session can be transferred. The question is which parts of migration theory still apply without a memory image.
+
+WebContainers run Node.js, so the focus lies on the handover of web applications with Node.js. In the assumed scenario, a session of such an application runs out of resources, and two requirements are placed on the target environment. 
+\begin{enumerate}
+\item The session runs code that the operator of the server does not control. Therefore, the target has to isolate it strongly.
+\item Every handover creates an environment of its own, which means the overhead per session has to stay small.
+\end{enumerate}
+
+Anjali et al. order isolation platforms by the share of operating system functionality that runs outside of the host kernel \cite{anjali2020blending}.
+At the lower end, Linux containers keep the overhead low, but they don't meet the first requirement, as their isolation is weaker \cite{agache2020firecracker}.
+The classic \ac{VM} with its complete device set lies at the upper end and isolates strongly. However, its overhead is too high for the second requirement \cite{agache2020firecracker}.
+Firecracker is a \ac{VMM} that provides microVMs \cite{agache2020firecracker}. It builds on the isolation of a classic \ac{VM}, but its overhead is lower \cite{anjali2020blending,agache2020firecracker}. 
+Therefore, the microVM meets both requirements and has been chosen for this work. Each environment is run inside a Firecracker microVM by E2B, a hosted service \cite{e2b-security-2026}.
+
+Two contributions are made for the handover of a running session across the isolation boundary from WebContainers to a microVM.
+\begin{enumerate}
+\item A derivation of the counterparts of the established migration strategies at the filesystem level and of what each one requires, checked by measurement for pre-copy (RQ-1).
+\item The project size from which on manifest-based transfer (sends the project without its dependencies) beats the full copy (sends the whole project) (RQ-2).
+\end{enumerate}
+
+In Section~\ref{sec:related-work}, the answer to the first research question, RQ-1, is derived from the established strategies. Both research questions are stated in Section~\ref{sec:research-questions}, and the methodology is described in Section~\ref{sec:methodology}. The results are reported in Section~\ref{sec:results}, RQ-1 first and then RQ-2. Lastly, they are discussed in Section~\ref{sec:discussion}, and Section~\ref{sec:conclusion} gives the conclusion.

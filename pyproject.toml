@@ -1,0 +1,14 @@
+[project]
+name = "microvm-research-trial-analysis"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "marimo",
+    "matplotlib",
+    "pandas",
+    "scipy",
+]
+
+[tool.uv]
+package = false
+python-preference = "only-system"

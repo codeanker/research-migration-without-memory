@@ -12,7 +12,7 @@ import { timed } from '../shared/timing.ts'
 const execFileAsync = promisify(execFile)
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024
 
-export interface LocalHandle extends ShellHandle {
+interface LocalHandle extends ShellHandle {
   children: ChildProcess[]
 }
 
@@ -23,8 +23,6 @@ interface ExecFileFailure {
 }
 
 export class LocalAdapter extends ShellTargetAdapter<LocalHandle> {
-  static override NAME = 'local'
-
   override async createTarget(): Promise<CreateResult<LocalHandle>> {
     const { value: home, ms: boot_ms } = await timed(() =>
       mkdtemp(path.join(tmpdir(), 'handover-local-'))
@@ -73,7 +71,7 @@ export class LocalAdapter extends ShellTargetAdapter<LocalHandle> {
   }
 
   override async destroy(handle: LocalHandle): Promise<void> {
-    for (const child of handle.children ?? []) {
+    for (const child of handle.children) {
       if (!child.killed) child.kill()
     }
     await rm(handle.home, { recursive: true, force: true })

@@ -6,7 +6,7 @@ import { timed } from '../shared/timing.ts'
 
 const DEFAULT_HOME = '/home/user'
 
-export interface E2BHandle extends ShellHandle {
+interface E2BHandle extends ShellHandle {
   sandbox: Sandbox
 }
 
@@ -16,13 +16,12 @@ interface SandboxProbe {
 }
 
 export class E2BAdapter extends ShellTargetAdapter<E2BHandle> {
-  static override NAME = 'e2b'
   probe: SandboxProbe | null = null
 
   override async createTarget(opts?: CreateOptions): Promise<CreateResult<E2BHandle>> {
     const apiKey = process.env.E2B_API_KEY
     if (!apiKey) {
-      throw new Error('E2B_API_KEY is not set (only from environment variable, see README)')
+      throw new Error('E2B_API_KEY is not set')
     }
     const { value: sandbox, ms: boot_ms } = await timed(() =>
       Sandbox.create(opts?.lifetimeMs ? { apiKey, timeoutMs: opts.lifetimeMs } : { apiKey })
@@ -42,7 +41,7 @@ export class E2BAdapter extends ShellTargetAdapter<E2BHandle> {
       return { exitCode: 0, stdout: '', stderr: '' }
     }
     const res = await handle.sandbox.commands.run(script, { timeoutMs })
-    return { exitCode: res.exitCode, stdout: res.stdout ?? '', stderr: res.stderr ?? '' }
+    return { exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr }
   }
 
   override async writeFileToTarget(

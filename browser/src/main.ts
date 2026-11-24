@@ -1,4 +1,4 @@
-import { isBrowserUsable, runOnce } from './experiment'
+import { runOnce } from './experiment'
 import { MEASUREMENT_STAGES, STRATEGIES } from '../../shared/stages.ts'
 import type { HandoverApi } from '../../shared/browser-api.ts'
 
@@ -8,7 +8,7 @@ declare global {
   }
 }
 
-window.__handover = { runOnce, isBrowserUsable }
+window.__handover = { runOnce }
 
 const logEl = document.getElementById('log') as HTMLPreElement | null
 const startBtn = document.getElementById('start') as HTMLButtonElement | null
@@ -67,17 +67,13 @@ async function main(
   logIntervalMs: number,
   stopOffsetRaw: string
 ): Promise<void> {
-  if (!isBrowserUsable()) {
-    log('ERROR: crossOriginIsolated is false. Use Chrome or Edge, not Firefox/Safari.')
-    return
-  }
   for (let runIndex = 1; runIndex <= runs; runIndex++) {
     const firstMark = runIndex === 1 ? ' [first]' : ''
     const stopOffsetMs =
       stopOffsetRaw === '' ? Math.random() * logIntervalMs : Number(stopOffsetRaw)
     log(
-      `--- Run ${runIndex}/${runs} (stage "${stage}", strategy "${strategy}", log interval ${logIntervalMs}ms, ` +
-        `stop offset ${stopOffsetMs.toFixed(0)}ms${stopOffsetRaw === '' ? ', unseeded' : ''})${firstMark} ---`
+      `Run ${runIndex}/${runs} (stage "${stage}", strategy "${strategy}", log interval ${logIntervalMs}ms, ` +
+        `stop offset ${stopOffsetMs.toFixed(0)}ms${stopOffsetRaw === '' ? ', unseeded' : ''})${firstMark}`
     )
     try {
       const outcome = await runOnce({

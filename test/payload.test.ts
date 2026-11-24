@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { MEASUREMENT_STAGES } from '../shared/stages.ts'
 import { lockfileForStage, packageJsonForStage, stageNeedsInstall } from '../browser/src/payload.ts'
 
-test('every stage with dependencies ships a lockfile that matches its package.json', () => {
+test('lockfile matches package.json', () => {
   for (const stage of MEASUREMENT_STAGES) {
     const pkg = JSON.parse(packageJsonForStage(stage))
     const lockfile = lockfileForStage(stage)
@@ -19,7 +19,7 @@ test('every stage with dependencies ships a lockfile that matches its package.js
   }
 })
 
-test('the lockfile keeps the trailing newline npm writes', () => {
+test('lockfile trailing newline', () => {
   for (const stage of MEASUREMENT_STAGES) {
     const lockfile = lockfileForStage(stage)
     if (lockfile !== null) assert.ok(lockfile.endsWith('}\n'), stage)

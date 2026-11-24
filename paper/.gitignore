@@ -1,0 +1,16 @@
+build/
+scrap/
+
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
+/figures/decomposition.pdf

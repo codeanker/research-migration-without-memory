@@ -5,7 +5,8 @@ import { REPO_ROOT, RUNNER_READY, mirror, spawnRunner, streamsOf, waitForStdout 
 import { buildFakeExport } from './fake-export.ts'
 import { HEADER } from '../shared/protocol.ts'
 import { deltaIncludes, isPushStrategy } from '../shared/push.ts'
-import type { CsvNumber, Row } from './csv.ts'
+import { grew } from './util.ts'
+import type { Row } from './csv.ts'
 import type { Strategy } from '../shared/stages.ts'
 
 const PORT = 8799
@@ -39,10 +40,6 @@ async function prepare(runIndex: number, strategy: string, zipBytes: Buffer): Pr
   if (!response.ok || !body.token) throw new Error(`/prepare failed: ${body.error ?? response.status}`)
   console.log(`Run ${runIndex} (${strategy}): prepared, push_bytes=${zipBytes.length}`)
   return body.token
-}
-
-function grew(later: CsvNumber, earlier: CsvNumber): boolean {
-  return typeof later === 'number' && typeof earlier === 'number' && later > earlier
 }
 
 async function main(): Promise<void> {
@@ -188,49 +185,15 @@ async function main(): Promise<void> {
         r.boot_ms === '' &&
         r.delta_files === DELTA_FILES.length
     )
-  const ok =
-    resumed && exact && measured && consistent && resumeVerified && quiet && recomputable && pushed
+  const checks = { resumed, exact, measured, consistent, resumeVerified, quiet, recomputable, pushed }
+  const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name)
 
-  if (!quiet) {
-    console.log('\nSanity warnings in at least one run:')
-    for (const r of results) {
-      if (r.sanity_warnings) console.log(`  ${r.run_id}: ${r.sanity_warnings}`)
-    }
+  for (const r of results) {
+    if (r.sanity_warnings) console.log(`sanity warning ${r.run_id}: ${r.sanity_warnings}`)
   }
-  if (!recomputable) {
-    console.log(
-      '\ninterruption_split_ms NOT recomputable from the raw columns: stop_at, restore_issued_at, ' +
-        'restore_mark_ns or first_tick_at is missing, or the arithmetic does not match.'
-    )
-  }
-  if (!resumeVerified) {
-    console.log(
-      '\nResume NOT confirmed: resume_verified is not true in every run, or the counters did not ' +
-        'grow. The process starts but does not keep counting.'
-    )
-  }
-  if (!exact) {
-    console.log(
-      '\nCounter offset NOT resolved: counter_actual != counter_expected in at least one run.'
-    )
-  }
-  if (!pushed) {
-    console.log(
-      '\nPush run NOT as expected: push row missing, push_bytes, push_boot_ms, push_upload_ms or push_unpack_ms missing, ' +
-        `push_install_ms or boot_ms set, or delta_files != ${DELTA_FILES.length}.`
-    )
-  }
-  if (!measured) {
-    console.log('\nInterruption time NOT measured: interruption_ms missing or not positive.')
-  }
-  if (!consistent) {
-    console.log(
-      `\nInterruption time INCONSISTENT: interruption_ms and interruption_split_ms deviate by ` +
-        `more than ${INTERRUPTION_TOLERANCE_MS}ms, although both were taken from the same clock.`
-    )
-  }
-  console.log(ok ? `\nSMOKE TEST OK: all ${RUNS.length} runs succeeded.` : '\nSMOKE TEST FAILED.')
-  process.exit(ok ? 0 : 1)
+  for (const name of failed) console.log(`failed: ${name}`)
+  console.log(failed.length === 0 ? `\nSmoke test ok: all ${RUNS.length} runs succeeded.` : '\nSmoke test failed.')
+  process.exit(failed.length === 0 ? 0 : 1)
 }
 
 main().catch((err: unknown) => {

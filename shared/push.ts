@@ -22,7 +22,7 @@ export function expectedTicks(windowMs: number): number {
   return Math.floor(windowMs / HEARTBEAT_TICK_MS)
 }
 
-export interface ZipListingTotals {
+interface ZipListingTotals {
   files: number
   bytes: number
 }

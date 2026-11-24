@@ -1,0 +1,94 @@
+\PassOptionsToPackage{cmyk,table}{xcolor}
+% pbalance back in for camera-ready: below one column of text it aborts pdflatex on infinite glue.
+\documentclass[conference]{iaria}
+\pdfoutput=1
+
+% BEWARE: iaria.cls requires this TeX stack: pdflatex/biblatex/biber!
+
+% !TeX spellcheck = en-US
+% !TeX encoding = utf8
+% !TeX program = pdflatex
+% !BIB program = biblatex / biber
+
+% --- Language & quotation marks ---
+\usepackage[babel=true,english=american]{csquotes}
+\usepackage[english]{babel} % en-US
+
+% --- Additional packages for tables/units ---
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage[nohyperlinks]{acronym}
+
+\acrodef{API}{application programming interface}
+\acrodef{CPU}{central processing unit}
+\acrodef{CSV}{comma-separated values}
+\acrodef{IQR}{interquartile range}
+\acrodef{LAN}{local area network}
+\acrodef{VM}{virtual machine}
+\acrodef{VMM}{virtual machine monitor}
+\acrodef{WASM}{WebAssembly}
+
+% --- Bibliography (bib file; style/backend come from iaria.cls) ---
+\addbibresource{references.bib}
+
+% floatrow sets \textwidth to \columnwidth inside a float, and a float can trigger \output there.
+\makeatletter
+\AtBeginDocument{\edef\paper@textwidth{\the\textwidth}}
+\pretocmd{\@outputdblcol}{\textwidth\paper@textwidth\relax}{}{\PackageError{main}{patch failed}{}}
+\makeatother
+
+% --- Metadata ---
+\hypersetup{
+  pdftitle={Migration Without Memory: Session Handover Across the Browser-to-microVM Isolation Boundary},
+  pdfauthor={Jane Schönfeld, Nils Mohr, Malte Prieß}
+}
+
+\title{Migration Without Memory:\\ Session Handover Across the Browser-to-microVM Isolation Boundary}
+
+\author{
+    \IEEEauthorblockN{
+        Jane Schönfeld\IEEEauthorrefmark{1},
+        Dr. Nils Mohr\IEEEauthorrefmark{2},
+        Prof. Dr. Malte Prieß\IEEEauthorrefmark{1}
+    }
+    \IEEEauthorblockA{
+        \IEEEauthorrefmark{1}Department of Computer Science and Electrical Engineering,
+        University of Applied Sciences (HAW) Kiel, Germany\\
+        e-mail: \texttt{jane.schoenfeld@stu.haw-kiel.de}, \texttt{malte.priess@haw-kiel.de}
+    }
+    \IEEEauthorblockA{
+        \IEEEauthorrefmark{2}CODEANKER GmbH, Flensburg, Germany\\
+        e-mail: \texttt{nils.mohr@codeanker.de}
+    }
+}
+
+\hyphenation{WebContainers Web-Assem-bly}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{plain}
+\pagestyle{plain}
+
+\begin{abstract}
+A development environment in WebContainers runs on the WebAssembly runtime inside the browser tab. Hence, it starts quickly and uses the capacity of the client. If a session runs out of resources, it may have to be handed over to a microVM on the server. The migration of a virtual machine transfers memory pages, but the WebContainers application programming interface documents an export for the filesystem and not for the memory. Without a memory image, three parts of migration theory still apply, the split into cold and live migration, the downtime and the total migration time. Cold migration, pre-copy, post-copy and hybrid migration all have a counterpart at the filesystem level, each with its own condition. Pre-copy requires an anticipated handover, post-copy requires the browser tab to stay open until all files have been fetched, and hybrid migration requires both. Pre-copy and cold migration are measured as the interruption time of a small heartbeat process, from its stop in the browser to its restart in a microVM on the hosted service E2B. On the largest of four project sizes, the full copy (cold migration) sends the whole project after the stop and has a median interruption time of \SI{8.74}{\second}. Pre-copy sends the project once to a target created before the stop, which lowers the median interruption time to \SI{1.69}{\second}. However, pre-copy takes \SI{1.16}{\second} longer in total than the full copy. Without anticipation, the full copy is compared with manifest-based transfer, which sends the project without its dependencies and installs them on the target. For the four projects on E2B, manifest-based transfer is faster from a size between \SI{4.62}{\mega\byte} and \SI{13.93}{\mega\byte}. This size may also depend on their packages, on the uplink of the client and on the registry link of the target.
+\end{abstract}
+\acresetall
+
+\begin{IEEEkeywords}
+WebAssembly; microVM; session handover; pre-copy; cold migration.
+\end{IEEEkeywords}
+
+\input{sections/01-introduction}
+\input{sections/02-related-work}
+\input{sections/03-research-questions}
+\input{sections/04-methodology}
+\input{sections/05-results}
+\input{sections/06-discussion}
+\input{sections/07-conclusion}
+\input{sections/08-acknowledgment}
+
+\newrefcontext
+\printbibliography
+
+\end{document}

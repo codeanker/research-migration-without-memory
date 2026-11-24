@@ -1,0 +1,16 @@
+\section{Research Questions}
+\label{sec:research-questions}
+
+Two research questions are investigated during this work.\medskip
+
+\textbf{RQ-1}: Which of the established migration strategies have a counterpart at the filesystem level across an isolation boundary that shares no memory image?
+
+\medskip
+\textbf{RQ-1} is a question about mechanisms and its answer is derived from the literature. It is answered by comparing each strategy against the operations the WebContainers \ac{API} offers. Of the two cases from Section~\ref{sec:related-work}, the anticipated handover is checked by measurement.
+
+\medskip
+\textbf{RQ-2}: From which project size on does manifest-based transfer beat the full copy (cold migration) at a session handover across such a boundary?
+
+\medskip
+\textbf{RQ-2} addresses the second case, a handover that is not anticipated, and is answered by measurement. Since manifest-based transfer sends fewer bytes but has to install the dependencies on the target, which strategy is faster depends on the project size. Post-copy is not compared for RQ-2, because it needs the browser tab until the last file has been fetched, whereas the full copy and manifest-based transfer only need it until the upload has ended. Furthermore, as the heartbeat accesses only three files after the restart, the interruption time of post-copy would hardly depend on the project size (Section~\ref{sec:methodology}).
+Because only four project sizes are measured, RQ-2 is answered as the interval between two adjacent sizes for these four projects, and only additionally as an estimate in megabytes.

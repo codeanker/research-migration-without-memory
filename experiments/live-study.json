@@ -32,7 +32,7 @@
     "Tried 20261019 (0 cells miss a position), the only seed tried.",
     "Primary comparison, fixed before the runs: interruption_ms, median difference precopy against",
     "full and manifest-push against manifest within this session, bootstrap CI and permutation test",
-    "as in the main study, under the restricted randomization of the seed rule.",
+    "as in the size study, under the restricted randomization of the seed rule.",
     "Idle reference of push_source_ticks: the idle tick rate of this session, from the regression of",
     "state_loss_ticks on stop_offset_actual_ms over all 120 rows. Rows with stop_offset_actual_ms",
     "outside [0, logIntervalMs) are named by run_id, not dropped.",

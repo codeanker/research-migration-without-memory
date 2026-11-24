@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile)
 
 const LOGGING_OVERHEAD_MS = 0.42
 
-export interface FakeExportOptions {
+interface FakeExportOptions {
   lastSourceTickAt: number
   logIntervalMs: number
   priorCounter?: number

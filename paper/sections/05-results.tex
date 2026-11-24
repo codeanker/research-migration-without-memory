@@ -1,0 +1,51 @@
+\section{Results}
+\label{sec:results}
+
+In all 360 runs, the target loaded the exported counter and kept counting.
+
+\subsection{Live study (RQ-1)}
+
+The full copy and manifest-based transfer reach median interruption times of \SI{8.74}{\second} and \SI{6.91}{\second}. Pre-copy reaches an interruption time of \SI{1.69}{\second} and a total handover time of \SI{9.90}{\second}. For manifest-push, these values are \SI{1.57}{\second} and \SI{8.17}{\second}. At the stop, the full copy sends \SI{13.93}{\mega\byte} and manifest-based transfer \SI{7.45}{\kilo\byte}. Pre-copy and manifest-push only send \SI{1.16}{\kilo\byte} and \SI{1.15}{\kilo\byte} at the stop.
+
+In the primary comparisons, pre-copy lowers the median interruption time by \SI{7.05}{\second} compared to the full copy (95\,\% CI \SIrange{6.52}{7.47}{\second}). For the full copy, the microVM creation has a median of \SI{0.84}{\second}. Manifest-push lowers the median interruption time by \SI{5.34}{\second} compared to manifest-based transfer (95\,\% CI \SIrange{5.01}{5.71}{\second}). For manifest-based transfer, the install and the microVM creation have medians of \SI{4.34}{\second} and \SI{0.93}{\second}. Both permutation tests give $p \leq 0.0001$.
+
+Between pre-copy and manifest-push, the interruption time differs by \SI{119}{\milli\second} (95\,\% CI \SIrange{-95}{559}{\milli\second}). The interval includes zero. The source shortfall of pre-copy has a median of 14.5\,\%, with a range of 10.3 to 17.2\,\%. The source of manifest-push stays within 4\,\% of its idle rate.
+
+In total, pre-copy takes more time than the full copy. The difference is \SI{1.16}{\second} (95\,\% CI \SIrange{0.55}{1.59}{\second}), and against manifest-push it is \SI{1.73}{\second} (95\,\% CI \SIrange{1.14}{2.40}{\second}).
+
+\subsection{Size study (RQ-2)}
+
+\begin{table}[t]
+\caption{Interruption time of the size study in seconds, as median and \ac{IQR} over 30 runs per cell.}
+\label{tab:interruption}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}lrrrrr@{}}
+\toprule
+Level & Payload & Full & Manifest & \multicolumn{2}{c}{Full $-$ Manifest} \\
+\cmidrule(l){5-6}
+ & & median (\acs{IQR}) & median (\acs{IQR}) & median & 95\,\% CI \\
+\midrule
+small  & \SI{1.8}{\kilo\byte}   & 3.02 (0.51) & 3.12 (0.76) & $-0.10$ & $[-0.38, 0.27]$ \\
+light  & \SI{0.91}{\mega\byte}  & 3.66 (0.80) & 5.72 (1.08) & $-2.05$ & $[-2.54, -1.55]$ \\
+medium & \SI{4.62}{\mega\byte}  & 5.44 (0.53) & 7.39 (1.33) & $-1.95$ & $[-2.56, -1.52]$ \\
+large  & \SI{13.93}{\mega\byte} & 8.71 (0.77) & 6.95 (0.96) & $+1.76$ & $[1.42, 2.21]$ \\
+\bottomrule
+\end{tabular*}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{figures/decomposition.pdf}
+  \caption{Mean of each phase of the total handover time in the size study, 30 runs per cell.}
+  \label{fig:decomposition}
+\end{figure}
+
+Manifest-based transfer is slower than the full copy at the light and the medium level. At the large level it is faster (Table~\ref{tab:interruption}). At these three levels the permutation test gives $p \leq 0.0001$. At the small level the difference lies in an interval that includes zero ($p = 0.55$).
+
+Therefore, the sign of the difference changes between the medium and the large level, from \SI{4.62}{\mega\byte} to \SI{13.93}{\mega\byte}. The estimated crossing point is \SI{9.5}{\mega\byte} (95\,\% CI \SIrange{8.7}{10.4}{\mega\byte}).
+
+Figure~\ref{fig:decomposition} shows where the difference arises. The transfer of the full copy grows with the payload from \SI{1.26}{\second} at the small level to \SI{7.03}{\second} at the large one. For manifest-based transfer, it stays at \SIrange{1.32}{1.42}{\second} at every level. In return, manifest-based transfer runs the install on the target. This takes \SI{3.01}{\second} at the light level, \SI{4.88}{\second} at the medium and \SI{4.47}{\second} at the large one. The install is shorter than the saved transfer time only at the large level, where \SI{5.71}{\second} of transfer time are saved. At the medium level the saved transfer time is \SI{2.31}{\second} and at the light level \SI{0.75}{\second}. Additionally, at the three upper levels, the target start of manifest-based transfer is \SIrange{0.39}{0.46}{\second} shorter than for the full copy.
+
+The state loss has a median of five ticks over all 240 runs and four to six ticks per cell.

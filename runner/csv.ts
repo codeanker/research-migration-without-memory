@@ -1,171 +1,99 @@
 import { appendFile, readFile } from 'node:fs/promises'
 
-export type Blank = ''
+type Blank = ''
 export type CsvNumber = number | Blank
-export type CsvFlag = boolean | Blank
-export type CsvTime = string
+type CsvFlag = boolean | Blank
 
-export interface Row {
-  run_id: string
-  run_at: CsvTime
-  session_label: string
-  target: string
-  stage: string
-  strategy: string
-  first_run: CsvFlag
-  first_run_of_cell: CsvFlag
-  expect_failure: CsvFlag
-  position_in_cycle: CsvNumber
-  cycle: CsvNumber
-  log_interval_ms: CsvNumber
-  payload_bytes: CsvNumber
+const NUMBER = '' as CsvNumber
+const FLAG = '' as CsvFlag
+const TEXT = '' as string
 
-  kill_to_export_ms: CsvNumber
-  export_ms: CsvNumber
-  ingest_ms: CsvNumber
-  upload_ms: CsvNumber
-  boot_ms: CsvNumber
-  unpack_ms: CsvNumber
-  install_ms: CsvNumber
-  readstate_ms: CsvNumber
-  restart_ms: CsvNumber
-  alive_ms: CsvNumber
-  alive_to_tick_ms: CsvNumber
-  adapter_overhead_ms: CsvNumber
-  total_sum_ms: CsvNumber
-  total_wall_ms: CsvNumber
-  total_wall_to_tick_ms: CsvNumber
+const EMPTY_ROW = {
+  run_id: TEXT,
+  run_at: TEXT,
+  session_label: TEXT,
+  target: TEXT,
+  stage: TEXT,
+  strategy: TEXT,
+  first_run: FLAG,
+  first_run_of_cell: FLAG,
+  expect_failure: FLAG,
+  position_in_cycle: NUMBER,
+  cycle: NUMBER,
+  log_interval_ms: NUMBER,
+  payload_bytes: NUMBER,
 
-  interruption_ms: CsvNumber
-  interruption_gap_ms: CsvNumber
-  interruption_split_ms: CsvNumber
+  kill_to_export_ms: NUMBER,
+  export_ms: NUMBER,
+  ingest_ms: NUMBER,
+  upload_ms: NUMBER,
+  boot_ms: NUMBER,
+  unpack_ms: NUMBER,
+  install_ms: NUMBER,
+  readstate_ms: NUMBER,
+  restart_ms: NUMBER,
+  alive_ms: NUMBER,
+  alive_to_tick_ms: NUMBER,
+  adapter_overhead_ms: NUMBER,
+  total_sum_ms: NUMBER,
+  total_wall_ms: NUMBER,
+  total_wall_to_tick_ms: NUMBER,
 
-  heartbeat_resumed: CsvFlag
-  state_restored: CsvFlag
-  counter_expected: CsvNumber
-  counter_actual: CsvNumber
-  first_tick_counter: CsvNumber
+  interruption_ms: NUMBER,
+  interruption_gap_ms: NUMBER,
+  interruption_split_ms: NUMBER,
 
-  resume_verified: CsvFlag
-  resume_tick_counter: CsvNumber
-  resume_state_counter: CsvNumber
-  state_loss_ticks: CsvNumber
+  heartbeat_resumed: FLAG,
+  state_restored: FLAG,
+  counter_expected: NUMBER,
+  counter_actual: NUMBER,
+  first_tick_counter: NUMBER,
 
-  stop_offset_target_ms: CsvNumber
-  stop_offset_actual_ms: CsvNumber
-  logging_overhead_ms: CsvNumber
+  resume_verified: FLAG,
+  resume_tick_counter: NUMBER,
+  resume_state_counter: NUMBER,
+  state_loss_ticks: NUMBER,
 
-  stop_at: CsvTime
-  last_source_tick_at: CsvTime
-  first_tick_at: CsvTime
-  detect_at: CsvTime
-  restore_issued_at: CsvTime
-  restore_mark_ns: string
-  restore_dispatch_ms: CsvNumber
-  target_clock_offset_ms: CsvNumber
-  target_clock_rtt_ms: CsvNumber
-  client_clock_skew_ms: CsvNumber
-  client_header_delay_ms: CsvNumber
-  host_stall_ms: CsvNumber
-  push_export_ms: CsvNumber
-  push_bytes: CsvNumber
-  push_upload_ms: CsvNumber
-  push_boot_ms: CsvNumber
-  push_unpack_ms: CsvNumber
-  push_install_ms: CsvNumber
-  prepare_ms: CsvNumber
-  prepare_to_stop_ms: CsvNumber
-  delta_bytes: CsvNumber
-  delta_files: CsvNumber
-  push_source_ticks: CsvNumber
-  push_expected_ticks: CsvNumber
-  sanity_warnings: string
-  error: string
+  stop_offset_target_ms: NUMBER,
+  stop_offset_actual_ms: NUMBER,
+  logging_overhead_ms: NUMBER,
+
+  stop_at: TEXT,
+  last_source_tick_at: TEXT,
+  first_tick_at: TEXT,
+  detect_at: TEXT,
+  restore_issued_at: TEXT,
+  restore_mark_ns: TEXT,
+  restore_dispatch_ms: NUMBER,
+  target_clock_offset_ms: NUMBER,
+  target_clock_rtt_ms: NUMBER,
+  client_clock_skew_ms: NUMBER,
+  client_header_delay_ms: NUMBER,
+  host_stall_ms: NUMBER,
+  push_export_ms: NUMBER,
+  push_bytes: NUMBER,
+  push_upload_ms: NUMBER,
+  push_boot_ms: NUMBER,
+  push_unpack_ms: NUMBER,
+  push_install_ms: NUMBER,
+  prepare_ms: NUMBER,
+  prepare_to_stop_ms: NUMBER,
+  delta_bytes: NUMBER,
+  delta_files: NUMBER,
+  push_source_ticks: NUMBER,
+  push_expected_ticks: NUMBER,
+  sanity_warnings: TEXT,
+  error: TEXT,
 }
 
-export const CSV_COLUMNS = [
-  'run_id',
-  'run_at',
-  'session_label',
-  'target',
-  'stage',
-  'strategy',
-  'first_run',
-  'first_run_of_cell',
-  'expect_failure',
-  'position_in_cycle',
-  'cycle',
-  'log_interval_ms',
-  'payload_bytes',
-  'kill_to_export_ms',
-  'export_ms',
-  'ingest_ms',
-  'upload_ms',
-  'boot_ms',
-  'unpack_ms',
-  'install_ms',
-  'readstate_ms',
-  'restart_ms',
-  'alive_ms',
-  'alive_to_tick_ms',
-  'adapter_overhead_ms',
-  'total_sum_ms',
-  'total_wall_ms',
-  'total_wall_to_tick_ms',
-  'interruption_ms',
-  'interruption_gap_ms',
-  'interruption_split_ms',
-  'heartbeat_resumed',
-  'state_restored',
-  'counter_expected',
-  'counter_actual',
-  'first_tick_counter',
-  'resume_verified',
-  'resume_tick_counter',
-  'resume_state_counter',
-  'state_loss_ticks',
-  'stop_offset_target_ms',
-  'stop_offset_actual_ms',
-  'logging_overhead_ms',
-  'stop_at',
-  'last_source_tick_at',
-  'first_tick_at',
-  'detect_at',
-  'restore_issued_at',
-  'restore_mark_ns',
-  'restore_dispatch_ms',
-  'target_clock_offset_ms',
-  'target_clock_rtt_ms',
-  'client_clock_skew_ms',
-  'client_header_delay_ms',
-  'host_stall_ms',
-  'push_export_ms',
-  'push_bytes',
-  'push_upload_ms',
-  'push_boot_ms',
-  'push_unpack_ms',
-  'push_install_ms',
-  'prepare_ms',
-  'prepare_to_stop_ms',
-  'delta_bytes',
-  'delta_files',
-  'push_source_ticks',
-  'push_expected_ticks',
-  'sanity_warnings',
-  'error',
-] as const
+export type Row = typeof EMPTY_ROW
 
-export type CsvColumn = (typeof CSV_COLUMNS)[number]
-
-type IsExactly<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
-type Assert<T extends true> = T
-
-export type RowCoversEveryCsvColumn = Assert<IsExactly<keyof Row, CsvColumn>>
+export const CSV_COLUMNS = Object.keys(EMPTY_ROW) as readonly (keyof Row)[]
 
 const COLUMN_SET: ReadonlySet<string> = new Set(CSV_COLUMNS)
 
 export function makeEmptyRow(): Row {
-  return Object.fromEntries(CSV_COLUMNS.map((col) => [col, ''])) as unknown as Row
+  return { ...EMPTY_ROW }
 }
 
 export async function ensureCsvHeader(csvPath: string): Promise<void> {
@@ -189,9 +117,7 @@ export async function ensureCsvHeader(csvPath: string): Promise<void> {
   const found = header.split(',')
   throw new Error(
     `Header of ${csvPath} does not match CSV_COLUMNS ` +
-      `(${found.length} columns in the file, ${CSV_COLUMNS.length} expected). ` +
-      `New rows would end up under the wrong column names. ` +
-      `Rename or move the file, then the next run will recreate it with the correct header.\n` +
+      `(${found.length} columns in the file, ${CSV_COLUMNS.length} expected).\n` +
       `  File:     ${header}\n` +
       `  Expected: ${expected}`
   )
@@ -201,8 +127,7 @@ export async function appendCsvRow(csvPath: string, row: Row): Promise<void> {
   const unknown = Object.keys(row).filter((key) => !COLUMN_SET.has(key))
   if (unknown.length > 0) {
     throw new Error(
-      `row has ${unknown.length} field(s) that are not CSV columns: ${unknown.join(', ')}. ` +
-        'Add them to CSV_COLUMNS or drop them from the row.'
+      `row has ${unknown.length} field(s) that are not CSV columns: ${unknown.join(', ')}`
     )
   }
   const line = CSV_COLUMNS.map((col) => csvField(row[col])).join(',')
@@ -216,7 +141,7 @@ function csvField(value: unknown): string {
   return str
 }
 
-export interface ParsedCsv {
+interface ParsedCsv {
   header: string[]
   rows: Record<string, string>[]
 }
@@ -228,8 +153,7 @@ export function parseCsv(text: string): ParsedCsv {
   const rows = dataRecords.map((fields, index) => {
     if (fields.length !== header.length) {
       throw new Error(
-        `CSV row ${index + 2} has ${fields.length} fields, the header has ${header.length}. ` +
-          'The file was written by two different column lists.'
+        `CSV row ${index + 2} has ${fields.length} fields, the header has ${header.length}`
       )
     }
     return Object.fromEntries(header.map((name, i) => [name, fields[i]]))
@@ -277,7 +201,6 @@ function parseRecords(text: string): string[][] {
       hasContent = true
       endField()
     } else if (char === '\n' || char === '\r') {
-      if (char === '\r' && text[i + 1] === '\n') i++
       if (hasContent || field !== '' || fields.length > 0) endRecord()
     } else {
       hasContent = true

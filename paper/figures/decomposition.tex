@@ -1,0 +1,65 @@
+\documentclass[tikz,border=2pt]{standalone}
+\usepackage{mathptmx}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+\definecolor{transfer}{HTML}{2A78D6}
+\definecolor{install}{HTML}{1BAF7A}
+\definecolor{targetstart}{HTML}{EB6834}
+\definecolor{harness}{HTML}{8A8A85}
+
+\begin{document}
+\begin{tikzpicture}[font=\footnotesize]
+\begin{axis}[
+  xbar stacked,
+  width=252pt, height=160pt,
+  bar width=7pt,
+  enlarge y limits={abs=0.6},
+  xmin=0, xmax=10,
+  xtick distance=2,
+  clip=false,
+  xlabel={Total handover time (s)},
+  xlabel style={font=\scriptsize, yshift=2pt},
+  ytick=data,
+  yticklabels from table={decomposition.dat}{label},
+  y dir=reverse,
+  ticklabel style={font=\scriptsize},
+  tick align=outside,
+  tick style={color=black!45, line width=0.4pt},
+  axis line style={color=black!45, line width=0.4pt},
+  axis y line*=left,
+  axis x line*=bottom,
+  xmajorgrids,
+  grid style={color=black!12, line width=0.4pt},
+  every axis plot/.append style={draw=white, line width=0.7pt},
+  legend style={
+    at={(0,-0.21)}, anchor=north west,
+    draw=none, fill=none,
+    legend columns=1,
+    font=\scriptsize,
+  },
+  legend cell align=left,
+]
+
+\addplot[fill=transfer] table[x expr=\thisrow{transfer}/1000, y=y] {decomposition.dat};
+\addlegendentry{transfer: export, upload, unpack}
+
+\addplot[fill=install] table[x expr=\thisrow{install}/1000, y=y] {decomposition.dat};
+\addlegendentry{install}
+
+\addplot[fill=targetstart] table[x expr=\thisrow{targetstart}/1000, y=y] {decomposition.dat};
+\addlegendentry{target start: microVM creation, restart, first tick}
+
+\addplot[fill=harness] table[x expr=\thisrow{harness}/1000, y=y] {decomposition.dat};
+\addlegendentry{harness: archive handling, diagnostics}
+
+\addplot[
+  draw=none, fill=none, forget plot,
+  point meta=explicit,
+  nodes near coords={\pgfmathprintnumber[fixed, zerofill, precision=1]{\pgfplotspointmeta}\,s},
+  every node near coord/.append style={anchor=west, xshift=2pt, font=\scriptsize, text=black!75},
+] table[x expr=0.001, y=y, meta expr=\thisrow{total}/1000] {decomposition.dat};
+
+\end{axis}
+\end{tikzpicture}
+\end{document}

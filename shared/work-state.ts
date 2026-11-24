@@ -1,4 +1,3 @@
-
 export interface ProcessState {
   counter?: number
   pid?: number
@@ -7,8 +6,8 @@ export interface ProcessState {
 }
 
 export interface ProcessSnapshot {
-  command?: string
-  cwd?: string
+  command: string
+  cwd: string
   counter?: number | null
   logIntervalMs?: number | null
   stateLossTicks?: number | null

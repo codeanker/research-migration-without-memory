@@ -9,8 +9,8 @@ import type {
   OrderCoverageEntry,
   PlanEntry,
 } from './plan.ts'
-import { fmt, median, pluck, readJson } from './util.ts'
-import type { CsvColumn, Row } from './csv.ts'
+import { fmt, median, num, pluck, readJson } from './util.ts'
+import type { Row } from './csv.ts'
 import type { EnvInfo } from './env-info.ts'
 import type { CsvRowJson } from '../shared/browser-api.ts'
 
@@ -52,11 +52,11 @@ const PICKED_ROW_FIELDS = [
   'first_run_of_cell',
   'sanity_warnings',
   'error',
-] as const satisfies readonly CsvColumn[]
+] as const
 
 type PickedField = (typeof PICKED_ROW_FIELDS)[number]
 
-export type PickedRow = { [K in PickedField]: Row[K] | null }
+type PickedRow = { [K in PickedField]: Row[K] | null }
 
 export interface RunRecord extends PlanEntry {
   started_at: string
@@ -70,7 +70,7 @@ export interface RunRecord extends PlanEntry {
   runner_warnings: string[]
 }
 
-export interface CellSummary {
+interface CellSummary {
   planned: number
   done: number
   ok: number
@@ -83,7 +83,7 @@ export interface CellSummary {
   state_loss_ticks_median: number | null
 }
 
-export interface SessionSummary {
+interface SessionSummary {
   planned: number
   done: number
   failed: number
@@ -93,7 +93,7 @@ export interface SessionSummary {
   cells: Record<string, CellSummary>
 }
 
-export interface EnvDrift {
+interface EnvDrift {
   previous_session: string | null
   differences: { field: string; previous: unknown; current: unknown }[]
   note?: string
@@ -168,8 +168,8 @@ export function summarize(session: SessionManifest, plan: PlanEntry[]): SessionS
       total_to_tick_ms: [],
       state_loss_ticks: [],
     }
+    byCell[entry.cellKey].planned += 1
   }
-  for (const entry of plan) byCell[entry.cellKey].planned += 1
 
   for (const record of session.runs) {
     const cell = byCell[record.cellKey]
@@ -181,10 +181,10 @@ export function summarize(session: SessionManifest, plan: PlanEntry[]): SessionS
     if (row && row.resume_verified !== true) cell.resume_unverified += 1
     if (typeof row?.interruption_ms === 'number') cell.interruption_ms.push(row.interruption_ms)
     if (typeof row?.total_wall_ms === 'number') {
-      cell.total_ms.push(row.total_wall_ms + (Number(row.export_ms) || 0))
+      cell.total_ms.push(row.total_wall_ms + num(row.export_ms))
     }
     if (typeof row?.total_wall_to_tick_ms === 'number') {
-      cell.total_to_tick_ms.push(row.total_wall_to_tick_ms + (Number(row.export_ms) || 0))
+      cell.total_to_tick_ms.push(row.total_wall_to_tick_ms + num(row.export_ms))
     }
     if (typeof row?.state_loss_ticks === 'number') cell.state_loss_ticks.push(row.state_loss_ticks)
   }
@@ -230,7 +230,7 @@ export function printPlan(config: ExperimentConfig, plan: PlanEntry[], paths: Da
   console.log(
     `[experiment] target=${config.target} repeats=${config.repeats} order=shuffled ` +
       `seed=${config.seed}${config.seedGenerated ? ' (generated)' : ''} ` +
-      `stopOffset=${config.stopOffset.mode}${config.stopOffset.mode === 'fixed' ? ` ${config.stopOffset.valueMs}ms` : ''}`
+      `stopOffset=${config.stopOffset.mode}`
   )
   console.log(`[experiment] ${plan.length} runs over ${cells.length} cells: ${cells.join(', ')}`)
   printStopOffsetCoverage(plan)
@@ -239,7 +239,7 @@ export function printPlan(config: ExperimentConfig, plan: PlanEntry[], paths: Da
     console.log(
       `  ${String(entry.seq).padStart(3)}  ${entry.cellKey.padEnd(12)} rep ${String(entry.rep).padStart(2)}  ` +
         `pos ${entry.positionInCycle}  ` +
-        `stop offset ${entry.stopOffsetTargetMs === null ? 'off' : entry.stopOffsetTargetMs.toFixed(0) + 'ms'}` +
+        `stop offset ${entry.stopOffsetTargetMs.toFixed(0)}ms` +
         `${entry.firstRun ? '  [first]' : ''}`
     )
   }
@@ -252,8 +252,7 @@ function printOrderCoverage(plan: PlanEntry[], cellCount: number): void {
   for (const [key, c] of Object.entries(coverage)) {
     const warning =
       c.missing_positions.length > 0
-        ? `  <- never ran at position ${c.missing_positions.join(', ')} of ${cellCount}, ` +
-          'the cell is confounded with the positions it did take'
+        ? `  <- never ran at position ${c.missing_positions.join(', ')} of ${cellCount}`
         : ''
     console.log(
       `  ${key.padEnd(12)} n=${String(c.n).padStart(3)}: ${c.positions.join('/')}${warning}`
@@ -292,13 +291,13 @@ export function printEnvInfo(
     console.log(
       `  clock: offset ${fmt(envInfo.clock.target_clock_offset_ms)}ms, ` +
         `rtt ${fmt(envInfo.clock.target_clock_rtt_ms)}ms, ` +
-        `half rtt ${fmt(envInfo.clock.target_clock_rtt_ms / 2)}ms plus 1ms resolution (this is the reportable accuracy)`
+        `half rtt ${fmt(envInfo.clock.target_clock_rtt_ms / 2)}ms`
     )
   } else {
-    console.log('  clock: MISSING - no successful clock measurement, check the runner output')
+    console.log('  clock: MISSING')
   }
   if (drift && !drift.previous_session) {
-    console.log('  no earlier session to compare against, this is the reference for the next one')
+    console.log('  no earlier session to compare against')
   } else if (drift?.previous_session) {
     if (drift.differences.length === 0) {
       console.log(`  no drift against ${drift.previous_session}`)
@@ -313,14 +312,10 @@ export function printEnvInfo(
   }
 }
 
-export function printSummary(
-  session: SessionManifest,
-  sessionPath: string,
-  paths: DataPaths
-): void {
+export function printSummary(session: SessionManifest, sessionPath: string): void {
   const s = session.summary
   if (!s) return
-  console.log('\n=== Session summary ===')
+  console.log('\nSession summary')
   console.log(`Manifest: ${displayPath(sessionPath)}`)
   console.log(
     `${s.done}/${s.planned} runs, ${s.failed} failed, ${s.with_error_field} with a set error field, ` +
@@ -336,28 +331,11 @@ export function printSummary(
         `${fmt(cell.total_ms_median).padStart(6)}  ${fmt(cell.state_loss_ticks_median).padStart(10)}`
     )
   }
-  console.log(
-    '\nMedians, not means; "resume?" counts runs without a confirmed resume. "total" is ' +
-      'export_ms + total_wall_ms; the manifest also carries total_to_tick_ms_median, the same ' +
-      'value with the poll detection latency removed.'
-  )
   if (session.aborted) console.log(`\nSession aborted: ${session.aborted}`)
   const emptyCells = Object.entries(s.cells).filter(([, cell]) => cell.ok === 0)
   if (emptyCells.length > 0) {
-    console.log(
-      `\nWARNING: no successful run in ${emptyCells.map(([key]) => key).join(', ')} - ` +
-        'paper/figures/prepare-data.ts will abort with "no runs for <key>".'
-    )
+    console.log(`\nWARNING: no successful run in ${emptyCells.map(([key]) => key).join(', ')}`)
   }
-  console.log('\nSecure the data now:')
-  const csv = displayPath(paths.csvPath)
-  const { dir, name } = path.parse(paths.csvPath)
-  const backup = displayPath(path.join(dir, `${name}-`))
-  console.log(`  cp "${csv}" "${backup}$(date +%Y%m%d-%H%M).csv"`)
-  console.log(
-    `  git add "${csv}" "${displayPath(paths.envPath)}" "${displayPath(sessionPath)}" && ` +
-      `git commit -m "Data as of $(date +%Y-%m-%d): ${s.done} runs"`
-  )
 }
 
 function displayPath(target: string): string {
@@ -373,12 +351,7 @@ export async function compareWithPreviousSession(
 ): Promise<EnvDrift | null> {
   if (!envInfo) return null
   const sessionDir = path.dirname(currentPath)
-  let files: string[]
-  try {
-    files = (await readdir(sessionDir)).filter((f) => f.endsWith('.json')).sort()
-  } catch {
-    return null
-  }
+  const files = (await readdir(sessionDir)).filter((f) => f.endsWith('.json')).sort()
   const candidates: { name: string; parsed: SessionManifest }[] = []
   for (const name of files) {
     if (path.join(sessionDir, name) === currentPath) continue
