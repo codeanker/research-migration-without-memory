@@ -12,6 +12,7 @@ MRP1 research project at HAW Kiel in cooperation with CODEANKER GmbH in Flensbur
 - [Limits of the measurement](#limits-of-the-measurement)
 - [Team](#team)
 - [Use of Generative AI](#use-of-generative-ai)
+- [License](#license)
 
 ## Research questions
 
@@ -156,3 +157,7 @@ How the authors ensured ownership of the results:
 - All measured numbers reported in the paper can be reproduced from the raw data with these scripts.
 - All cited sources were checked against the original publications.
 - AI-generated code was reviewed and tested by the authors before use.
+
+## License
+
+The code and the data are released under the MIT License, see [`LICENSE`](LICENSE).
