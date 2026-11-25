@@ -148,13 +148,13 @@ Generative AI tools were used as assistants in this project, under the authors' 
 
 | Tool | Used for |
 |---|---|
-| Claude Code (Anthropic) with Claude Opus 5 and Claude Opus 5.5 | Structuring (ideas, outline), drafting of sections revised by the authors, editorial revision, literature search, implementation of the measurement setup, the analysis scripts and the code of the figures, as well as testing of the measurement setup and analysis scripts |
+| Claude Code (Anthropic) with Claude Opus 5 and Claude Opus 5.5 | Structuring (ideas, outline), drafting of sections revised by the authors, editorial revision, literature search, implementation and testing of the measurement setup and analysis script, code for the figures |
 | Google NotebookLM, Gemini 3.5 | Literature search |
 
 How the authors ensured ownership of the results:
 
-- All measurements were carried out by the authors on the infrastructure described in the paper. The raw data and analysis scripts are included in this repository ([`data/`](data/), [`analysis/distribution.py`](analysis/distribution.py)).
-- All measured numbers reported in the paper can be reproduced from the raw data with these scripts.
+- All measurements were carried out by the authors on the infrastructure described in the paper. The raw data and analysis script are included in this repository ([`data/`](data/), [`analysis/distribution.py`](analysis/distribution.py)).
+- All measured numbers reported in the paper can be reproduced from the raw data with this script.
 - All cited sources were checked against the original publications.
 - AI-generated code was reviewed and tested by the authors before use.
 
