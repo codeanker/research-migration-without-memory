@@ -1,6 +1,6 @@
 # research-migration-without-memory
 
-MRP1 research project at HAW Kiel in cooperation with CODEANKER GmbH in Flensburg. The paper is submitted to IARIA CLOUD COMPUTING 2027 by the 24th of November 2026.
+MRP1 research project at HAW Kiel in cooperation with CODEANKER GmbH in Flensburg. The paper is submitted to IARIA CLOUD COMPUTING 2027 by the 25th of November 2026.
 
 ## Contents
 
